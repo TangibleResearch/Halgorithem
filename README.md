@@ -3,7 +3,7 @@
 </p>
 
 # Halgorightem
-
+![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
 > Detecting AI Hallucinations **Before Them Happening**
 
 ## Whats Halgortihem
@@ -11,6 +11,10 @@ Halgorithem is a Custom Designed Algorithem For Detecting AI Hallucinations with
 
 ## How does Halgorithem Work
 Halgorithem works by Parsing your files and input into a Tree which is compared with file chunks which were made into trees. If something doesn't make sense, Halgorithem Flags it.
+
+![How It Works](./assets/HowItWorks.png)
+
+## Screenshots
 
 ![Halgo Plugins](./assets/Halgorithem.gif)
 

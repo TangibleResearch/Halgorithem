@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Halgorithem AI</title>
+    <meta
+      name="description"
+      content="A simple website for Halgorithem, a Python project for detecting AI hallucinations against source documents."
+    >
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    >
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body id="top">
+    <nav class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
+      <div class="container">
+        <a class="navbar-brand d-flex align-items-center gap-2 fw-bold" href="#top">
+          <img src="assets/Tangible.png" alt="Tangible Research" class="brand-logo">
+          <span>Halgorithem</span>
+        </a>
+        <button
+          class="navbar-toggler"
+          type="button"
+          data-bs-toggle="collapse"
+          data-bs-target="#mainNav"
+          aria-controls="mainNav"
+          aria-expanded="false"
+          aria-label="Toggle navigation"
+        >
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="mainNav">
+          <div class="navbar-nav ms-auto">
+            <a class="nav-link" href="#how">How it works</a>
+            <a class="nav-link" href="#install">Install</a>
+            <a class="nav-link" href="#demo">Demo</a>
+            <a class="nav-link" href="#license">License</a>
+            <a class="nav-link" href="#cla">CLA</a>
+          </div>
+        </div>
+      </div>
+    </nav>
+
+    <main>
+      <section class="hero py-5">
+        <div class="container py-lg-5">
+          <div class="row align-items-center g-5">
+            <div class="col-lg-6 fade-up">
+              <p class="text-uppercase small fw-bold text-primary mb-2">AI hallucination checking</p>
+              <h1 class="display-3 fw-bold mb-3">Detect unsupported AI claims before they ship.</h1>
+              <p class="lead text-secondary mb-4">
+                Halgorithem compares AI output against source files using cleaned text,
+                sentence chunks, token similarity, and number conflict checks.
+              </p>
+              <div class="d-flex flex-wrap gap-2">
+                <a class="btn btn-primary btn-lg" href="#install">Install steps</a>
+                <a class="btn btn-outline-dark btn-lg" href="#how">How it works</a>
+              </div>
+            </div>
+            <div class="col-lg-6 fade-up delay-1">
+              <div class="card shadow-sm border-0">
+                <div class="card-body p-4">
+                  <h2 class="h5 mb-3">Claim report</h2>
+                  <div class="report-row supported">
+                    <span>Supported claims</span>
+                    <strong>Verified</strong>
+                  </div>
+                  <div class="report-row warning">
+                    <span>Number mismatches</span>
+                    <strong>Flagged</strong>
+                  </div>
+                  <div class="report-row danger">
+                    <span>Unsupported terms</span>
+                    <strong>Review</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="py-4 bg-light border-top border-bottom">
+        <div class="container">
+          <div class="row g-3 text-center">
+            <div class="col-md-4">
+              <strong>Rule-forward</strong>
+              <p class="mb-0 text-secondary">Designed with little to no AI inside the detector.</p>
+            </div>
+            <div class="col-md-4">
+              <strong>Chunk based</strong>
+              <p class="mb-0 text-secondary">Matches claims against overlapping source sentences.</p>
+            </div>
+            <div class="col-md-4">
+              <strong>Evidence focused</strong>
+              <p class="mb-0 text-secondary">Shows closest source chunks and unsupported terms.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="how" class="py-5">
+        <div class="container py-lg-4">
+          <div class="row g-5 align-items-start">
+            <div class="col-lg-5 fade-up">
+              <p class="text-uppercase small fw-bold text-primary mb-2">How it works</p>
+              <h2 class="fw-bold mb-3">A simple source-to-claim pipeline.</h2>
+              <p class="text-secondary">
+                Halgorithem cleans source text, splits it into sentences, builds chunks,
+                extracts tokens and numbers, then compares every AI claim to the truth data.
+              </p>
+            </div>
+            <div class="col-lg-7">
+              <div class="row g-3">
+                <div class="col-md-6 fade-up">
+                  <div class="card h-100">
+                    <div class="card-body">
+                      <span class="step-number">1</span>
+                      <h3 class="h5 mt-3">Clean</h3>
+                      <p class="text-secondary mb-0">Normalize text, whitespace, quotes, and punctuation.</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-md-6 fade-up delay-1">
+                  <div class="card h-100">
+                    <div class="card-body">
+                      <span class="step-number">2</span>
+                      <h3 class="h5 mt-3">Chunk</h3>
+                      <p class="text-secondary mb-0">Group nearby sentences with overlap for better context.</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-md-6 fade-up delay-2">
+                  <div class="card h-100">
+                    <div class="card-body">
+                      <span class="step-number">3</span>
+                      <h3 class="h5 mt-3">Compare</h3>
+                      <p class="text-secondary mb-0">Score token overlap, important terms, and string similarity.</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-md-6 fade-up delay-3">
+                  <div class="card h-100">
+                    <div class="card-body">
+                      <span class="step-number">4</span>
+                      <h3 class="h5 mt-3">Flag</h3>
+                      <p class="text-secondary mb-0">Return supported, hallucination, or contradiction results.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="diagram mt-5 fade-up">
+            <img src="assets/HowItWorks.png" alt="How Halgorithem works" class="img-fluid rounded border bg-white">
+          </div>
+        </div>
+      </section>
+
+      <section id="install" class="py-5 bg-light border-top border-bottom">
+        <div class="container py-lg-4">
+          <div class="row g-5 align-items-start">
+            <div class="col-lg-5 fade-up">
+              <p class="text-uppercase small fw-bold text-primary mb-2">Install</p>
+              <h2 class="fw-bold mb-3">Run it locally.</h2>
+              <p class="text-secondary">
+                These are the same install steps from the project README.
+              </p>
+            </div>
+            <div class="col-lg-7">
+              <div class="list-group shadow-sm fade-up delay-1">
+                <div class="list-group-item p-4">
+                  <div class="fw-bold mb-2">1. Create a virtual environment</div>
+                  <code>python -m venv venv</code>
+                </div>
+                <div class="list-group-item p-4">
+                  <div class="fw-bold mb-2">2. Activate the virtual environment</div>
+                  <code>source venv/bin/activate</code>
+                </div>
+                <div class="list-group-item p-4">
+                  <div class="fw-bold mb-2">3. Install requirements</div>
+                  <code>pip install -r requirements.txt</code>
+                </div>
+                <div class="list-group-item p-4">
+                  <div class="fw-bold mb-2">4. Run Halgorithem</div>
+                  <code>python main.py</code>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="demo" class="py-5">
+        <div class="container py-lg-4">
+          <div class="row g-5 align-items-center">
+            <div class="col-lg-7 fade-up">
+              <img src="assets/Halgorithem.gif" alt="Halgorithem demo" class="img-fluid rounded shadow-sm border">
+            </div>
+            <div class="col-lg-5 fade-up delay-1">
+              <p class="text-uppercase small fw-bold text-primary mb-2">Demo</p>
+              <h2 class="fw-bold mb-3">Readable results for supported and risky claims.</h2>
+              <p class="text-secondary">
+                The report summarizes supported claims, possible hallucinations,
+                contradictions, unsupported terms, and the closest source chunk.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="license" class="py-5 bg-light border-top border-bottom">
+        <div class="container py-lg-4">
+          <div class="row g-4">
+            <div class="col-lg-6 fade-up">
+              <p class="text-uppercase small fw-bold text-primary mb-2">License</p>
+              <h2 class="fw-bold mb-3">AGPL-3.0</h2>
+              <p class="text-secondary">
+                Halgorithem is free software under the GNU Affero General Public
+                License v3.0 or later, copyright 2026 Tangible Research.
+              </p>
+            </div>
+            <div class="col-lg-6 fade-up delay-1">
+              <div class="card h-100">
+                <div class="card-body">
+                  <h3 class="h5">Warranty</h3>
+                  <p class="text-secondary mb-0">
+                    The project is distributed in the hope it will be useful,
+                    but without any warranty of merchantability or fitness for a
+                    particular purpose.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="cla" class="py-5">
+        <div class="container py-lg-4">
+          <div class="row g-4">
+            <div class="col-lg-5 fade-up">
+              <p class="text-uppercase small fw-bold text-primary mb-2">CLA</p>
+              <h2 class="fw-bold mb-3">Contributor License Agreement</h2>
+              <p class="text-secondary">
+                Contributors keep ownership of their work while granting Tangible
+                Research rights to use, modify, distribute, sublicense, and offer
+                commercial or dual licensing.
+              </p>
+            </div>
+            <div class="col-lg-7 fade-up delay-1">
+              <ul class="list-group shadow-sm">
+                <li class="list-group-item p-3">Contributions are released under AGPL-3.0.</li>
+                <li class="list-group-item p-3">Contributors confirm they have the legal right to submit their work.</li>
+                <li class="list-group-item p-3">Submitting a pull request, commit, or contribution accepts the CLA.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="py-4 border-top">
+      <div class="container d-flex flex-wrap justify-content-between gap-2">
+        <span class="text-secondary">Halgorithem by Tangible Research</span>
+        <a href="#install">Install steps</a>
+      </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="script.js"></script>
+  </body>
+</html>
