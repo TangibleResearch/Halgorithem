@@ -10,6 +10,108 @@ import pysbd
 import re
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 
+
+import ast
+import operator
+
+ops = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+    ast.Mod: operator.mod
+}
+
+def eval_expr(node):
+    if isinstance(node, ast.Num):
+        return node.n
+    elif isinstance(node, ast.BinOp):
+        return ops[type(node.op)](
+            eval_expr(node.left),
+            eval_expr(node.right)
+        )
+    else:
+        raise ValueError("Unsafe expression")
+
+def safe_eval(expr):
+    tree = ast.parse(expr, mode='eval')
+    return eval_expr(tree.body)
+
+def classify_claim_type(self, claim):
+    claim = claim.lower()
+
+    # math patterns
+    math_patterns = [
+        r"\d+\s*[\+\-\*/%]\s*\d+",   # 1 + 1
+        r"=",                        # equation
+        r"\d+\s*(percent|%)",        # 20%
+    ]
+
+    for pattern in math_patterns:
+        if re.search(pattern, claim):
+            return "MATH"
+
+    return "SOURCE" 
+def extract_math_expression(self, claim):
+    # simple version (can improve later)
+    if "=" in claim:
+        return claim.split("=")
+    return None
+def verify_math_claim(self, claim):
+    parts = self.extract_math_expression(claim)
+
+    if not parts:
+        return {
+            "status": "UNKNOWN",
+            "reason": "No valid math expression"
+        }
+
+    left, right = parts
+
+    try:
+        result = safe_eval(left)
+        expected = safe_eval(right)
+
+        if result == expected:
+            return {
+                "status": "SUPPORTED",
+                "claim": claim,
+                "type": "MATH"
+            }
+        else:
+            return {
+                "status": "CONTRADICTION",
+                "claim": claim,
+                "expected": result,
+                "got": expected,
+                "type": "MATH"
+            }
+
+    except Exception as e:
+        return {
+            "status": "ERROR",
+            "claim": claim,
+            "reason": str(e),
+            "type": "MATH"
+        }
+def verify_claim(self, claim, chunks, all_truth_tokens):
+    claim_type = self.classify_claim_type(claim)
+
+    if claim_type == "MATH":
+        return self.verify_math_claim(claim)
+
+    elif claim_type == "SOURCE":
+        return self.check_claim_against_chunks(
+            claim=claim,
+            chunks=chunks,
+            all_truth_tokens=all_truth_tokens
+        )
+
+    return {
+        "status": "UNKNOWN",
+        "claim": claim
+    }
 class Halgorithm:
     def __init__(self, sentences_per_chunk=2, sentence_overlap=1):
         self.sentences_per_chunk = sentences_per_chunk
@@ -294,7 +396,48 @@ class Halgorithm:
     # -------------------------------------------------
     # CLAIM CHECKING
     # -------------------------------------------------
+    def compare_with_reasoning(self, truth_file_paths, ai_output, threshold=0.30):
+        docs = self.load_files(truth_file_paths)
 
+        all_chunks = []
+        all_truth_tokens = set()
+
+        for doc in docs:
+            chunks = self.chunk_text(
+                doc["text"],
+                doc_id=doc["file_id"],
+                source_name=doc["file_path"]
+            )
+
+            all_chunks.extend(chunks)
+
+            for chunk in chunks:
+                all_truth_tokens.update(chunk["tokens"])
+
+        ai_claims = self.split_sentences(ai_output)
+
+        results = []
+
+        for claim_id, claim in enumerate(ai_claims, start=1):
+            claim_type = self.classify_claim_type(claim)
+
+            if claim_type == "MATH":
+                result = self.verify_math_claim(claim)
+
+            else:
+                result = self.check_claim_against_chunks(
+                    claim=claim,
+                    chunks=all_chunks,
+                    all_truth_tokens=all_truth_tokens,
+                    threshold=threshold
+                )
+
+            result["claim_id"] = claim_id
+            result["type"] = claim_type
+
+            results.append(result)
+
+        return results
     def check_claim_against_chunks(self, claim, chunks, all_truth_tokens, threshold=0.30):
         best_chunk = None
         best_score = 0.0
@@ -414,11 +557,10 @@ class Halgorithm:
         results = []
 
         for claim_id, claim in enumerate(ai_claims, start=1):
-            result = self.check_claim_against_chunks(
+            result = self.verify_claim(
                 claim=claim,
                 chunks=all_chunks,
-                all_truth_tokens=all_truth_tokens,
-                threshold=threshold
+                all_truth_tokens=all_truth_tokens
             )
 
             result["claim_id"] = claim_id
@@ -524,7 +666,7 @@ if __name__ == "__main__":
         sentence_overlap=1
     )
 
-    results = algo.compare_to_files(
+    results = algo.compare_with_reasoning(
         truth_file_paths=[
             "sources/BASIC.txt",
             "sources/BASIC2.txt"
