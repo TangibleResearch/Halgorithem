@@ -13,6 +13,12 @@ Halgorithem is a Custom Designed Algorithem For Detecting AI Hallucinations with
 Halgorithem works by Parsing your files and input into a Tree which is compared with file chunks which were made into trees. If something doesn't make sense, Halgorithem Flags it.
 
 ![How It Works](./assets/HowItWorks.png)
+## Key Features
+
+- **🔗 Fits Into Any AI workflow where responses are gened** <br>
+Halgorithem can be integrated into AI Pipelines designed in python like LangGraph, CrewAI, PydanticAI and Microsoft AutoGen
+
+
 
 ## Screenshots
 
@@ -37,7 +43,12 @@ To run Halgorithem, follow these steps:
    pip install -r requirements.txt
    ```
 
-4. **Run the code:**
+4. **Download the spaCy English model (if it is not installed automatically):**
    ```
-   python main.py
+   python -m spacy download en_core_web_sm
+   ```
+
+5. **Run the benchmark:**
+   ```
+   python bench.py
    ```

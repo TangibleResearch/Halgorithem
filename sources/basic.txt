@@ -1,0 +1,7 @@
+BASIC is a programming language created in 1964 by John G. Kemeny and Thomas E. Kurtz at Dartmouth College.
+
+It was designed to allow students to write programs easily without deep technical knowledge.
+
+BASIC was widely used on time-sharing systems in early computing environments.
+
+The language was interpreted in many early implementations.

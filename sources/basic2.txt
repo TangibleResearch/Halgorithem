@@ -1,0 +1,5 @@
+The BASIC programming language was developed at Dartmouth College.
+
+It became popular because it allowed multiple users to interact with a computer simultaneously through time-sharing.
+
+Early BASIC systems used interpreters rather than compilers.
