@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Halgorithem</title>
+    <style>
+        body {
+            font-family: Arial;
+            background: #0f172a;
+            color: white;
+            padding: 40px;
+        }
+
+        textarea {
+            width: 100%;
+            height: 100px;
+        }
+
+        .box {
+            margin-top: 20px;
+            padding: 15px;
+            background: #1e293b;
+            border-radius: 10px;
+        }
+
+        .supported { color: #22c55e; }
+        .contradiction { color: #ef4444; }
+        .hallucination { color: #eab308; }
+    </style>
+</head>
+<body>
+
+<h1>Halgorithem</h1>
+
+<form method="POST">
+    <textarea name="query" placeholder="Ask something..."></textarea>
+    <br><br>
+    <button type="submit">Run</button>
+</form>
+
+{% if ai_output %}
+<div class="box">
+    <h3>AI Output</h3>
+    <p>{{ ai_output }}</p>
+</div>
+{% endif %}
+
+{% if results %}
+<div class="box">
+    <h3>Verification</h3>
+
+    {% for claim in results.claims %}
+        <p>
+            Claim {{ loop.index }}:
+            <span class="{{ claim.status | lower }}">
+                {{ claim.status }}
+            </span>
+            ({{ "%.3f"|format(claim.score) }})
+        </p>
+    {% endfor %}
+
+    <p><b>Summary:</b> {{ results.summary }}</p>
+</div>
+{% endif %}
+
+</body>
+</html>

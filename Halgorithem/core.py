@@ -168,14 +168,29 @@ class Halgorithm:
             token for token in self.tokenize(claim)
             if not token.replace(".", "", 1).isdigit()
         }
-        numbers = set()
 
+        def is_year(n):
+            try:
+                return 1400 <= float(n) <= 2100
+            except (ValueError, TypeError):
+                return False
+
+        date_words = {"year", "founded", "created", "invented",
+                    "launched", "born", "died", "since"}
+        claim_is_about_date = any(
+            word in claim.lower() for word in date_words
+        )
+
+        numbers = set()
         for chunk in chunks:
             chunk_tokens = set(chunk["tokens"])
             lexical_overlap = claim_tokens & chunk_tokens
 
             if lexical_overlap or self.support_score(claim, chunk) >= threshold:
-                numbers.update(chunk["numbers"])
+                chunk_numbers = set(chunk["numbers"])
+                if not claim_is_about_date:
+                    chunk_numbers = {n for n in chunk_numbers if not is_year(n)}
+                numbers.update(chunk_numbers)
 
         return numbers
 
@@ -261,11 +276,51 @@ class Halgorithm:
         claim_numbers = set(self.extract_numbers(claim))
         truth_numbers = set(chunk["numbers"])
 
-        if claim_numbers and truth_numbers and not claim_numbers.issubset(truth_numbers):
-            return True, claim_numbers, truth_numbers
+        if not claim_numbers or not truth_numbers:
+            return False, claim_numbers, truth_numbers
+
+        def is_year(n):
+            try:
+                return 1400 <= float(n) <= 2100
+            except (ValueError, TypeError):
+                return False
+
+        def is_ordinal_or_date(n):
+            # mission numbers, day numbers, small ordinals
+            # should not be compared against each other
+            try:
+                return float(n) <= 31
+            except (ValueError, TypeError):
+                return False
+
+        for claim_num in claim_numbers:
+            try:
+                claim_val = float(claim_num)
+            except (ValueError, TypeError):
+                continue
+
+            # skip years and small ordinals entirely
+            if is_year(claim_val) or is_ordinal_or_date(claim_val):
+                continue
+
+            for truth_num in truth_numbers:
+                try:
+                    truth_val = float(truth_num)
+                except (ValueError, TypeError):
+                    continue
+
+                if is_year(truth_val) or is_ordinal_or_date(truth_val):
+                    continue
+
+                if claim_val == 0 or truth_val == 0:
+                    continue
+
+                ratio = min(claim_val, truth_val) / max(claim_val, truth_val)
+
+                if ratio >= 0.5 and claim_val != truth_val:
+                    return True, claim_numbers, truth_numbers
 
         return False, claim_numbers, truth_numbers
-
     def get_unsupported_terms(self, claim, all_truth_tokens):
         claim_tokens = set(self.tokenize(claim))
         all_truth_tokens = set(all_truth_tokens)
@@ -364,24 +419,7 @@ class Halgorithm:
             }
 
         unsupported_terms = self.get_unsupported_terms(claim, all_truth_tokens)
-        claim_numbers = set(self.extract_numbers(claim))
-        relevant_numbers = self.relevant_truth_numbers(claim, chunks, threshold=threshold)
-
-        if claim_numbers and relevant_numbers and not claim_numbers.issubset(relevant_numbers):
-            return {
-                "status": "CONTRADICTION",
-                "claim": claim,
-                "score": best_score,
-                "reason": "Number mismatch",
-                "ai_numbers": sorted(claim_numbers),
-                "truth_numbers": sorted(relevant_numbers),
-                "matched_doc_id": best_chunk["doc_id"],
-                "matched_source": best_chunk["source_name"],
-                "matched_chunk_id": best_chunk["chunk_id"],
-                "chunk_text": best_chunk["text"],
-                "unsupported_terms": unsupported_terms,
-            }
-
+        
         if best_number_conflict:
             return {
                 "status": "CONTRADICTION",
@@ -459,7 +497,21 @@ class Halgorithm:
             "chunk_text": best_chunk["text"],
             "unsupported_terms": unsupported_terms,
         }
-
+    def is_meaningful_claim(self, claim):
+        tokens = self.tokenize(claim)
+        # skip if too short
+        if len(tokens) < 4:
+            return False
+        # skip if no content words (just transition phrases)
+        filler = {
+            "here", "are", "the", "key", "details", "following",
+            "below", "above", "note", "please", "this", "these",
+            "is", "was", "were", "be", "been"
+        }
+        content_tokens = [t for t in tokens if t not in filler]
+        if len(content_tokens) < 2:
+            return False
+        return True
     def compare_to_docs(self, truth_docs, ai_output, threshold=0.30):
         if isinstance(truth_docs, str):
             truth_docs = [{
@@ -494,6 +546,10 @@ class Halgorithm:
         results = []
 
         for claim_id, claim in enumerate(self.split_sentences(ai_output), start=1):
+            
+            if not self.is_meaningful_claim(claim):  # add this
+                continue
+                
             claim_type = self.classify_claim_type(claim)
 
             if claim_type == "MATH":
@@ -576,15 +632,16 @@ class Halgorithm:
     def decompose_simple(self, claim):
         parts = []
         claim = claim.lower()
-        parts.append(claim)
+        parts.append(claim)  # full claim always first
 
         for separator in (" and ", " but ", " while "):
             if separator in claim:
-                parts.extend(
+                new_parts = [
                     part.strip()
                     for part in claim.split(separator)
                     if len(part.strip().split()) >= 3
-                )
+                ]
+                parts.extend(new_parts)
 
         if " by " in claim:
             before, after = claim.split(" by ", 1)
@@ -595,7 +652,15 @@ class Halgorithm:
             if word.isdigit() and len(word) == 4:
                 parts.append(f"year is {word}")
 
-        return list(set(parts))
+        # dedupe but preserve order
+        seen = set()
+        unique_parts = []
+        for part in parts:
+            if part not in seen:
+                seen.add(part)
+                unique_parts.append(part)
+
+        return unique_parts
 
     def print_report(self, results):
         strong_supported = [r for r in results if r["status"] == "SUPPORTED"]
