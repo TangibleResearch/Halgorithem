@@ -14,7 +14,7 @@ from .text_processing import (
     clean_text,
     tokenize,
 )
-
+from .nlp import nlp
 
 class Halgorithm:
     def __init__(self, sentences_per_chunk=2, sentence_overlap=1):
@@ -131,6 +131,9 @@ class Halgorithm:
         return clean_text(text)
 
     def split_sentences(self, text):
+        # strip markdown list prefixes and bold markers before segmenting
+        text = re.sub(r"^\s*\d+\.\s+\*{0,2}[^*\n]+\*{0,2}\s*", "", text, flags=re.MULTILINE)
+        text = re.sub(r"\*{1,2}([^*]+)\*{1,2}", r"\1", text)
         text = self.clean_text(text)
         sentences = self.parser.segment(text)
         return [sentence.strip() for sentence in sentences if sentence.strip()]
@@ -331,9 +334,21 @@ class Halgorithm:
             and not (self.get_synonyms(token) & all_truth_tokens)
         }
 
+        doc = nlp(claim)
+
+        # only keep proper nouns and numbers as unsupported terms — everything
+        # else (verbs, adjectives, common nouns) is structural, not factual
+        content_tokens = {
+            token.lemma_.lower()
+            for token in doc
+            if token.pos_ in {"PROPN", "NUM"}
+            and not token.is_stop
+        }
+
         unsupported = {
             term for term in unsupported
-            if len(term) > 2 or term.isdigit()
+            if term in content_tokens
+            or (term.isdigit() and len(term) != 4)
         }
 
         return sorted(unsupported)
@@ -456,7 +471,8 @@ class Halgorithm:
             if ent_tokens not in chunk_entities and not set(ent_tokens).issubset(chunk_tokens):
                 missing_entities.append(" ".join(ent_tokens))
 
-        if missing_entities and best_score < 0.85:
+        entity_hit_rate = (len(claim_entities) - len(missing_entities)) / len(claim_entities) if claim_entities else 1.0
+        if missing_entities and entity_hit_rate < 0.5 and best_score < threshold:
             return {
                 "status": "HALLUCINATION",
                 "claim": claim,
@@ -499,18 +515,38 @@ class Halgorithm:
         }
     def is_meaningful_claim(self, claim):
         tokens = self.tokenize(claim)
-        # skip if too short
         if len(tokens) < 4:
             return False
-        # skip if no content words (just transition phrases)
-        filler = {
-            "here", "are", "the", "key", "details", "following",
-            "below", "above", "note", "please", "this", "these",
-            "is", "was", "were", "be", "been"
-        }
-        content_tokens = [t for t in tokens if t not in filler]
-        if len(content_tokens) < 2:
+
+        # drop truncated sentences that end mid-thought
+        last_word = claim.strip().rstrip(".").split()[-1].lower()
+        if last_word in {"including", "such", "namely", "follows", "following", "as"}:
             return False
+
+        doc = nlp(claim)
+
+        # skip if subject is a demonstrative pronoun — summary sentence
+        subject = next((t for t in doc if t.dep_ == "nsubj"), None)
+        if subject and subject.text.lower() in {"these", "this", "those", "such"}:
+            return False
+
+        # skip if root verb is connective/interpretive
+        root = next((t for t in doc if t.dep_ == "ROOT"), None)
+        SUMMARY_VERBS = {
+            "reflect", "demonstrate", "show", "highlight", "illustrate",
+            "suggest", "indicate", "underscore", "emphasize", "represent",
+            "pivot", "expand", "mark", "signal", "mean", "position",
+        }
+        if root and root.lemma_.lower() in SUMMARY_VERBS:
+            return False
+
+        # skip if no verifiable content — no named entities, numbers, or proper nouns
+        has_named_entity = any(ent for ent in doc.ents)
+        has_number = any(t.like_num for t in doc)
+        has_propn = any(t.pos_ == "PROPN" for t in doc)
+        if not (has_named_entity or has_number or has_propn):
+            return False
+
         return True
     def compare_to_docs(self, truth_docs, ai_output, threshold=0.30):
         if isinstance(truth_docs, str):
@@ -633,20 +669,30 @@ class Halgorithm:
         parts = []
         claim = claim.lower()
         parts.append(claim)  # full claim always first
-
+        if len(claim.split()) > 20:
+            return parts
         for separator in (" and ", " but ", " while "):
-            if separator in claim:
-                new_parts = [
-                    part.strip()
-                    for part in claim.split(separator)
-                    if len(part.strip().split()) >= 3
-                ]
-                parts.extend(new_parts)
+            if separator not in claim:
+                continue
+            new_parts = [
+                part.strip()
+                for part in claim.split(separator)
+                if len(part.strip().split()) >= 3
+            ]
+            # only decompose if each part looks like a clause (has a verb)
+            part_docs = [nlp(part) for part in new_parts]
+            clause_parts = [
+                part for part, doc in zip(new_parts, part_docs)
+                if any(t.pos_ == "VERB" for t in doc)
+                and not part.strip().startswith("including")
+            ]
+            if len(clause_parts) >= 2:
+                parts.extend(clause_parts)
 
         if " by " in claim:
             before, after = claim.split(" by ", 1)
             parts.append(before.strip())
-            parts.append(f"creator is {after.strip().split()[0]}")
+            parts.append(after.strip())
 
         for word in claim.split():
             if word.isdigit() and len(word) == 4:
