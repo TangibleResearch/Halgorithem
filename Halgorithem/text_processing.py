@@ -2,49 +2,54 @@ import re
 from functools import lru_cache
 
 from cleantext import clean
+from markdown_it import MarkdownIt
+from quantulum3 import parser as qparser
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 import textacy.preprocessing as tprep
 
 from .nlp import WORDNET_AVAILABLE, nlp
 
 
-TOKEN_GRAMMAR = re.compile(
-    r"[A-Za-z]+(?:[-'][A-Za-z]+)*|"
-    r"[0-9]+(?:\.[0-9]+)?|"
-    r"[A-Z]\."
-)
-
 STOPWORDS = set(ENGLISH_STOP_WORDS)
-NEGATION_WORDS = {"not", "never", "no", "none", "isn't", "wasn't", "aren't", "weren't"}
+md = MarkdownIt()
 
 
 @lru_cache(maxsize=4096)
 def get_synonyms(word):
     if not WORDNET_AVAILABLE:
         return set()
-
     from nltk.corpus import wordnet
-
     synonyms = set()
     for syn in wordnet.synsets(word):
         for lemma in syn.lemmas():
             synonyms.add(lemma.name().lower().replace("_", " "))
-
     return synonyms
+
+
+def strip_markdown(text):
+    # parse markdown to plain text via markdown-it-py
+    tokens = md.parse(text)
+    plain = []
+    for token in tokens:
+        if token.children:
+            for child in token.children:
+                if child.type == "text" or child.type == "code_inline":
+                    plain.append(child.content)
+        elif token.type == "fence" or token.type == "code_block":
+            plain.append(token.content)
+    return " ".join(plain) if plain else text
 
 
 def clean_text(text):
     if not text:
         return ""
-
+    text = strip_markdown(text)
     text = tprep.normalize.unicode(text)
     text = tprep.normalize.whitespace(text)
     text = tprep.normalize.quotation_marks(text)
     text = tprep.remove.punctuation(text, only=["(", ")", ";", ":", "\""])
-
     if text and text[-1] not in ".!?":
         text += "."
-
     return clean(
         text,
         fix_unicode=True,
@@ -56,90 +61,60 @@ def clean_text(text):
     )
 
 
-def normalize_tokens(raw_tokens):
-    useful_tokens = []
-
-    for token in raw_tokens:
-        normalized = token.lower().strip(".")
-
-        if not normalized or normalized in STOPWORDS:
-            continue
-
-        useful_tokens.append(normalized)
-
-    return useful_tokens
-
-
 def tokenize(text):
-    raw_tokens = TOKEN_GRAMMAR.findall(text)
-    return normalize_tokens(raw_tokens)
+    doc = nlp(text)
+    return [
+        t.text.lower() for t in doc
+        if not t.is_punct and not t.is_space
+        and t.text.lower() not in STOPWORDS
+    ]
 
 
 def lemmatize_tokens(text):
     doc = nlp(text)
-    tokens = []
+    return [
+        t.lemma_.lower() for t in doc
+        if not t.is_punct and not t.is_space
+        and t.lemma_.lower() not in STOPWORDS
+        and t.lemma_ != "-PRON-"
+    ]
 
-    for token in doc:
-        if token.is_space or token.is_punct:
-            continue
-
-        lemma = token.lemma_.lower().strip(".")
-
-        if not lemma or lemma == "-pron-" or lemma in STOPWORDS:
-            continue
-
-        if TOKEN_GRAMMAR.fullmatch(token.text) or TOKEN_GRAMMAR.fullmatch(lemma):
-            tokens.append(lemma)
-
-    return tokens
-
-
-WORD_TO_NUM = {
-    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4,
-    "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
-    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
-    "fourteen": 14, "fifteen": 15, "sixteen": 16,
-    "seventeen": 17, "eighteen": 18, "nineteen": 19,
-    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
-    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
-    "hundred": 100, "thousand": 1000, "million": 1000000,
-    "billion": 1000000000,
-}
 
 def extract_numbers(text):
-    # catch digit numbers as before
-    digit_numbers = re.findall(r"\b\d+(?:\.\d+)?\b", text)
-    
-    # catch written numbers
-    words = re.findall(r"\b[a-z]+\b", text.lower())
-    word_numbers = [
-        str(WORD_TO_NUM[w]) for w in words 
-        if w in WORD_TO_NUM
-    ]
-    
-    return digit_numbers + word_numbers
+    # quantulum3 handles "seven billion", "3.5 million", "$4.2B", ordinals
+    quantities = qparser.parse(text)
+    extracted = [str(q.value) for q in quantities if q.value is not None]
+    # fallback for bare digits quantulum3 might miss
+    digit_fallback = re.findall(r"\b\d+(?:\.\d+)?\b", text)
+    seen = set(extracted)
+    for d in digit_fallback:
+        if d not in seen:
+            extracted.append(d)
+            seen.add(d)
+    return extracted
 
 
 def extract_entities(text):
     doc = nlp(text)
     entities = set()
-
     for ent in doc.ents:
-        ent_tokens = tuple(tokenize(ent.text))
-        if ent_tokens and not all(token.isdigit() for token in ent_tokens):
-            entities.add(ent_tokens)
-
-    title_tokens = [
-        token.lower().strip(".")
-        for token in TOKEN_GRAMMAR.findall(text)
-        if token[:1].isupper() and not token.isdigit()
-    ]
-    entities.update((token,) for token in title_tokens if token not in STOPWORDS)
-
+        tokens = tuple(
+            t.lower() for t in tokenize(ent.text)
+            if not t.isdigit()
+        )
+        if tokens:
+            entities.add(tokens)
     return entities
 
 
 def has_negation_mismatch(claim, chunk_text):
-    claim_words = set(re.findall(r"[a-z']+", claim.lower()))
-    chunk_words = set(re.findall(r"[a-z']+", chunk_text.lower()))
-    return bool(claim_words & NEGATION_WORDS) != bool(chunk_words & NEGATION_WORDS)
+    # negspacy marks negated entities on the doc
+    claim_doc = nlp(claim)
+    chunk_doc = nlp(chunk_text)
+    claim_has_negation = any(
+        getattr(t._, "negex", False) for t in claim_doc
+    )
+    chunk_has_negation = any(
+        getattr(t._, "negex", False) for t in chunk_doc
+    )
+    return claim_has_negation != chunk_has_negation

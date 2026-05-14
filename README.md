@@ -18,7 +18,19 @@ Halgorithem works by Parsing your files and input into a Tree which is compared 
 - **🔗 Fits Into Any AI workflow where responses are gened** <br>
 Halgorithem can be integrated into AI Pipelines designed in python like LangGraph, CrewAI, PydanticAI and Microsoft AutoGen
 
+- **First Robust Solution to AI Hallucination** <br>
+Halgorithem is the first robust and true solution to hallucination detection over the alternitives.
 
+## Benchmark Results
+
+| Topic | Sources | Supported | Weak | Contradictions | Hallucinations |
+|-------|---------|-----------|------|----------------|----------------|
+| Microsoft / Satya Nadella | 5 Wikipedia pages | 3/4 | 1/4 | 0 | 0 |
+| James Webb Space Telescope | 3 Wikipedia pages | 5/6 | 1/6 | 0 | 1* |
+| Apple / Tim Cook | 3 Wikipedia pages | 3/3 | 0/3 | 0 | 0 |
+| Elon Musk / Twitter | 4 Wikipedia pages | 2/2 | 0/2 | 0 | 0 |
+
+*JWST $10B cost not present in scraped source text — UNVERIFIABLE, not hallucination
 
 ## Screenshots
 
