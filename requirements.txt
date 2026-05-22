@@ -6,7 +6,7 @@ negspacy
 nltk
 openai
 pysbd
-quantulum3
+quantulum3[classifier]
 requests
 rich
 scikit-learn
