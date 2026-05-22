@@ -1,4 +1,5 @@
 import re
+import warnings
 from functools import lru_cache
 
 from cleantext import clean
@@ -82,9 +83,17 @@ def lemmatize_tokens(text):
 
 def extract_numbers(text):
     # quantulum3 handles "seven billion", "3.5 million", "$4.2B", ordinals
-    quantities = qparser.parse(text)
-    extracted = [str(q.value) for q in quantities if q.value is not None]
-    # fallback for bare digits quantulum3 might miss
+    try:
+        quantities = qparser.parse(text)
+        extracted = [str(q.value) for q in quantities if q.value is not None]
+    except ImportError:
+        warnings.warn("quantulum3 classifier dependency missing (e.g. 'stemming'); falling back to digit-only extraction.")
+        extracted = []
+    except Exception:
+        # If quantulum3 fails for any reason, don't crash the pipeline —
+        # fallback to simple digit extraction below.
+        extracted = []
+    # fallback for bare digits quantulum3 might miss or when quantulum3 not usable
     digit_fallback = re.findall(r"\b\d+(?:\.\d+)?\b", text)
     seen = set(extracted)
     for d in digit_fallback:
