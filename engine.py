@@ -86,9 +86,11 @@ class Engine:
         if not (total := len(claims)):
             return "No verifiable claims found."
         counts = {s: sum(1 for c in claims if c.get("status") == s)
-                  for s in ("SUPPORTED", "WEAK_SUPPORT", "CONTRADICTION", "HALLUCINATION")}
+                  for s in ("SUPPORTED", "WEAK_SUPPORT", "CONTRADICTION", "HALLUCINATION", "UNVERIFIABLE_DENIAL")}
         return (f"{counts['SUPPORTED']}/{total} supported, {counts['WEAK_SUPPORT']}/{total} weak, "
-                f"{counts['CONTRADICTION']}/{total} contradictions, {counts['HALLUCINATION']}/{total} hallucinations")
+                f"{counts['CONTRADICTION']}/{total} contradictions, "
+                f"{counts['HALLUCINATION']}/{total} hallucinations, "
+                f"{counts['UNVERIFIABLE_DENIAL']}/{total} unverifiable denials")
 
 
 _engine = Engine()

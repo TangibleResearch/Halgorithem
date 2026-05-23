@@ -180,6 +180,7 @@ supported   = sum(1 for c in claims if c["status"] == "SUPPORTED")
 weak        = sum(1 for c in claims if c["status"] == "WEAK_SUPPORT")
 contradicts = sum(1 for c in claims if c["status"] == "CONTRADICTION")
 hallucinated= sum(1 for c in claims if c["status"] == "HALLUCINATION")
+denials     = sum(1 for c in claims if c["status"] == "UNVERIFIABLE_DENIAL")
 
 console.print(Rule("[bold]Verification Summary[/bold]", style="dim"))
 console.print()
@@ -190,11 +191,13 @@ summary_table.add_row("Supported",      f"[green]{supported}/{total}[/green]")
 summary_table.add_row("Weak support",   f"[yellow]{weak}/{total}[/yellow]")
 summary_table.add_row("Contradictions", f"[red]{contradicts}/{total}[/red]")
 summary_table.add_row("Hallucinations", f"[bold red]{hallucinated}/{total}[/bold red]")
+summary_table.add_row("Unverifiable denials", f"[magenta]{denials}/{total}[/magenta]")
 console.print(summary_table)
 console.print()
 
 # Claim detail
 bad_claims = [c for c in claims if c["status"] in ("CONTRADICTION", "HALLUCINATION")]
+uncertain_claims = [c for c in claims if c["status"] == "UNVERIFIABLE_DENIAL"]
 ok_claims  = [c for c in claims if c["status"] in ("SUPPORTED", "WEAK_SUPPORT")]
 
 if ok_claims and Confirm.ask("[dim]Show supported claims too?[/dim]", default=False):
@@ -207,6 +210,23 @@ if ok_claims and Confirm.ask("[dim]Show supported claims too?[/dim]", default=Fa
         if c.get("unsupported_terms"):
             console.print(f"  [dim]unsupported terms: {', '.join(c['unsupported_terms'])}[/dim]")
     console.print()
+
+if uncertain_claims:
+    console.print(Rule("[bold]Needs Review[/bold]", style="magenta"))
+    console.print()
+    for c in uncertain_claims:
+        console.print(Panel(
+            f"[magenta]{c['status']}[/magenta]  [dim]score {round(c.get('score', 0), 3)}[/dim]\n\n"
+            f"{c.get('claim', '')}\n\n"
+            + (f"[dim]Unsupported terms:[/dim] {', '.join(c['unsupported_terms'])}\n"
+               if c.get("unsupported_terms") else "")
+            + (f"\n[dim]Closest chunk ({c.get('matched_source','')}, "
+               f"chunk {c.get('matched_chunk_id','')}):[/dim]\n{c.get('chunk_text','')}"
+               if c.get("chunk_text") else ""),
+            border_style="magenta",
+            padding=(1, 2),
+        ))
+        console.print()
 
 if bad_claims:
     console.print(Rule("[bold]Issues[/bold]", style="red"))

@@ -4,7 +4,14 @@ from pathlib import Path
 import pysbd
 from sentence_transformers import SentenceTransformer, util
 
+from .claim_extraction import extract_claims
+from .confidence import classify_support, confidence_score
+from .contradiction import find_contradiction, numbers_conflict
+from .evidence import best_evidence, build_evidence
 from .math_utils import numbers_close, safe_eval
+from .retrieval import rank_chunks
+from .source_quality import score_source
+from .temporal import temporal_warning
 from .text_processing import (
     clean_text,
     extract_entities,
@@ -18,6 +25,7 @@ from .nlp import nlp
 
 
 _embedder = SentenceTransformer("all-MiniLM-L6-v2")
+INITIAL_RE = re.compile(r"\b[a-z]\.$", re.IGNORECASE)
 
 
 class Halgorithm:
@@ -34,7 +42,16 @@ class Halgorithm:
     def split_sentences(self, text):
         text = self.clean_text(text)
         sentences = self.parser.segment(text)
-        return [s.strip() for s in sentences if s.strip()]
+        merged = []
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            if merged and INITIAL_RE.search(merged[-1]):
+                merged[-1] = f"{merged[-1]} {sentence}"
+            else:
+                merged.append(sentence)
+        return merged
 
     def tokenize(self, text):
         return tokenize(text)
@@ -75,12 +92,14 @@ class Halgorithm:
     def chunk_text(self, text, doc_id=1, source_name=None):
         sentences = self.split_sentences(text)
         chunks, start, chunk_id = [], 0, 1
+        quality = score_source(source_name, text)
         while start < len(sentences):
             end = start + self.sentences_per_chunk
             chunk = " ".join(sentences[start:end])
             chunks.append({
                 "doc_id": doc_id,
                 "source_name": source_name,
+                "source_quality": quality,
                 "chunk_id": chunk_id,
                 "sentence_start": start + 1,
                 "sentence_end": min(end, len(sentences)),
@@ -128,31 +147,10 @@ class Halgorithm:
     # ── Number conflict ───────────────────────────────────────────────────────
 
     def has_number_conflict(self, claim, chunk):
+        issue = numbers_conflict(claim, chunk, self.extract_numbers)
         claim_numbers = set(self.extract_numbers(claim))
         truth_numbers = set(chunk["numbers"])
-        if not claim_numbers or not truth_numbers:
-            return False, claim_numbers, truth_numbers
-
-        def skip(n):
-            try:
-                v = float(n)
-                return 1400 <= v <= 2100 or v <= 31  # years and small ordinals
-            except (ValueError, TypeError):
-                return True
-
-        for cn in claim_numbers:
-            if skip(cn):
-                continue
-            cv = float(cn)
-            for tn in truth_numbers:
-                if skip(tn):
-                    continue
-                tv = float(tn)
-                if cv == 0 or tv == 0:
-                    continue
-                if min(cv, tv) / max(cv, tv) >= 0.5 and cv != tv:
-                    return True, claim_numbers, truth_numbers
-        return False, claim_numbers, truth_numbers
+        return bool(issue), claim_numbers, truth_numbers
 
     # ── Meaningful claim filter ───────────────────────────────────────────────
 
@@ -172,14 +170,16 @@ class Halgorithm:
             return False
 
         tokens = self.tokenize(claim)
-        if len(tokens) < 4:
-            return False
 
         last_word = claim.strip().rstrip(".").split()[-1].lower()
         if last_word in {"including", "such", "namely", "follows", "following", "as"}:
             return False
 
         doc = nlp(claim)
+
+        has_anchor = any(doc.ents) or any(t.like_num for t in doc) or any(t.pos_ == "PROPN" for t in doc)
+        if len(tokens) < 4 and not has_anchor:
+            return False
 
         # reject vague summary sentences
         subject = next((t for t in doc if t.dep_ == "nsubj"), None)
@@ -207,14 +207,17 @@ class Halgorithm:
             return True
 
         # original anchor logic, but now only fallback
-        if any(doc.ents) or any(t.like_num for t in doc) or any(t.pos_ == "PROPN" for t in doc):
+        if has_anchor:
             return True
 
         # accept normal factual sentences with subject + verb
         has_subject = any(t.dep_ in {"nsubj", "nsubjpass"} for t in doc)
         has_verb = any(t.pos_ in {"VERB", "AUX"} for t in doc)
 
-        if has_subject and has_verb and len(tokens) >= 6:
+        if has_subject and has_verb and len(tokens) >= 4:
+            return True
+
+        if has_verb and len(tokens) >= 4:
             return True
 
         return False
@@ -237,87 +240,78 @@ class Halgorithm:
     # ── Core claim checker ────────────────────────────────────────────────────
 
     def check_claim_against_chunks(self, claim, chunks, all_truth_tokens, threshold=0.30):
-        best_chunk, best_score = None, 0.0
-        best_number_conflict, best_negation = None, False
-
-        for chunk in chunks:
-            score = self.support_score(claim, chunk)
-
-            # number subset bonus
-            claim_numbers = set(self.extract_numbers(claim))
-            if claim_numbers and claim_numbers.issubset(set(chunk["numbers"])):
-                score = min(score + 0.10, 1.0)
-
-            # negation penalty
-            negation = self.has_negation_mismatch(claim, chunk["text"])
-            if negation and score >= threshold:
-                score -= 0.30
-
-            # number conflict
-            conflict, cnums, tnums = self.has_number_conflict(claim, chunk)
-
-            if score > best_score:
-                best_score = score
-                best_chunk = chunk
-                best_negation = negation
-                best_number_conflict = (
-                    {"claim_numbers": sorted(cnums), "truth_numbers": sorted(tnums)}
-                    if conflict else None
-                )
-
+        candidates = rank_chunks(
+            claim=claim,
+            chunks=chunks,
+            score_fn=self.support_score,
+            extract_numbers=self.extract_numbers,
+            has_negation_mismatch=self.has_negation_mismatch,
+            threshold=threshold,
+            top_k=5,
+        )
         unsupported_terms = self.get_unsupported_terms(claim, all_truth_tokens)
+        evidence = build_evidence(candidates)
+        best = best_evidence(candidates)
 
-        if not best_chunk:
+        if not best:
             return {
                 "status": "HALLUCINATION", "claim": claim, "score": 0.0,
+                "confidence": 0.0,
                 "reason": "No matching chunk found",
                 "matched_doc_id": None, "matched_source": None,
                 "matched_chunk_id": None, "chunk_text": "",
                 "unsupported_terms": unsupported_terms,
+                "evidence": [],
             }
 
-        if best_number_conflict:
-            return {
-                "status": "CONTRADICTION", "claim": claim, "score": best_score,
-                "reason": "Number mismatch",
-                "ai_numbers": best_number_conflict["claim_numbers"],
-                "truth_numbers": best_number_conflict["truth_numbers"],
-                "matched_doc_id": best_chunk["doc_id"],
-                "matched_source": best_chunk["source_name"],
-                "matched_chunk_id": best_chunk["chunk_id"],
-                "chunk_text": best_chunk["text"],
-                "unsupported_terms": unsupported_terms,
-            }
+        best_chunk = candidates[0]["chunk"]
+        best_score = candidates[0]["score"]
+        contradiction = find_contradiction(
+            claim=claim,
+            chunk=best_chunk,
+            extract_numbers=self.extract_numbers,
+            has_negation_mismatch=self.has_negation_mismatch,
+            score=best_score,
+            threshold=threshold,
+        )
+        status = classify_support(
+            score=best_score,
+            threshold=threshold,
+            contradiction=contradiction,
+            unsupported_terms=unsupported_terms,
+            claim=claim,
+        )
+        confidence = confidence_score(
+            score=best_score,
+            evidence_count=len(evidence),
+            contradiction=contradiction,
+            unsupported_terms=unsupported_terms,
+            status=status,
+        )
+        warning = temporal_warning(claim)
 
-        if best_negation and best_score >= threshold:
-            return {
-                "status": "CONTRADICTION", "claim": claim, "score": best_score,
-                "reason": "Negation mismatch",
-                "matched_doc_id": best_chunk["doc_id"],
-                "matched_source": best_chunk["source_name"],
-                "matched_chunk_id": best_chunk["chunk_id"],
-                "chunk_text": best_chunk["text"],
-                "unsupported_terms": unsupported_terms,
-            }
-
-        # score-only status — no hardcoded word lists
-        supported_threshold = max(threshold + 0.25, 0.50)
-
-        if best_score >= supported_threshold:
-            status = "SUPPORTED"
-        elif best_score >= threshold:
-            status = "WEAK_SUPPORT"
-        else:
-            status = "HALLUCINATION"
-
-        return {
+        result = {
             "status": status, "claim": claim, "score": best_score,
-            "matched_doc_id": best_chunk["doc_id"],
-            "matched_source": best_chunk["source_name"],
-            "matched_chunk_id": best_chunk["chunk_id"],
-            "chunk_text": best_chunk["text"],
+            "confidence": confidence,
+            "matched_doc_id": best["doc_id"],
+            "matched_source": best["source"],
+            "matched_chunk_id": best["chunk_id"],
+            "chunk_text": best["text"],
             "unsupported_terms": unsupported_terms,
+            "evidence": evidence,
         }
+        if warning:
+            result["warning"] = warning["warning"]
+            result["as_of_year"] = warning["as_of_year"]
+        if contradiction:
+            result["reason"] = contradiction["reason"]
+            if "claim_numbers" in contradiction:
+                result["ai_numbers"] = contradiction["claim_numbers"]
+                result["truth_numbers"] = contradiction["truth_numbers"]
+            if "claim_years" in contradiction:
+                result["ai_years"] = contradiction["claim_years"]
+                result["truth_years"] = contradiction["truth_years"]
+        return result
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -338,9 +332,13 @@ class Halgorithm:
                 all_truth_tokens.update(chunk["tokens"])
 
         results = []
-        for claim_id, claim in enumerate(self.split_sentences(ai_output), 1):
-            if not self.is_meaningful_claim(claim):
-                continue
+        claims = extract_claims(
+            ai_output,
+            sentence_splitter=self.split_sentences,
+            meaningful_filter=self.is_meaningful_claim,
+        )
+        for claim_data in claims:
+            claim = claim_data["claim"]
             claim_type = self.classify_claim_type(claim)
             if claim_type == "MATH":
                 result = self.verify_math_claim(claim)
@@ -351,7 +349,9 @@ class Halgorithm:
                     all_truth_tokens=all_truth_tokens,
                     threshold=threshold,
                 )
-            result["claim_id"] = claim_id
+            result["claim_id"] = claim_data["claim_id"]
+            result["sentence_id"] = claim_data["sentence_id"]
+            result["source_sentence"] = claim_data["source_sentence"]
             result["type"] = claim_type
             results.append(result)
         return results
@@ -366,20 +366,24 @@ class Halgorithm:
         supported = [r for r in results if r["status"] == "SUPPORTED"]
         weak = [r for r in results if r["status"] == "WEAK_SUPPORT"]
         bad = [r for r in results if r["status"] in {"HALLUCINATION", "CONTRADICTION"}]
+        uncertain = [r for r in results if r["status"] == "UNVERIFIABLE_DENIAL"]
         total = len(results)
         confidence = (len(supported) + 0.5 * len(weak)) / total if total else 0
 
         print("\nHalgorithm Report")
         print("=" * 80)
-        print(f"Strongly supported: {len(supported)}  Weak: {len(weak)}  Issues: {len(bad)}")
+        print(
+            f"Strongly supported: {len(supported)}  Weak: {len(weak)}  "
+            f"Unverifiable denials: {len(uncertain)}  Issues: {len(bad)}"
+        )
         print(f"Confidence: {round(confidence * 100, 2)}%  —  {'reliable' if not bad else 'not reliable'}")
         print("=" * 80)
 
-        if not bad:
+        if not bad and not uncertain:
             print("No hallucinations found.\n")
             return
 
-        for r in bad:
+        for r in uncertain + bad:
             print("=" * 80)
             print(f"Claim #{r['claim_id']} | {r['status']} | score {round(r.get('score', 0), 3)}")
             print(f"\n{r['claim']}\n")
