@@ -157,17 +157,35 @@ class Halgorithm:
     # ── Meaningful claim filter ───────────────────────────────────────────────
 
     def is_meaningful_claim(self, claim):
-        if len(self.tokenize(claim)) < 4:
+        claim_l = claim.lower().strip()
+
+        # filter metadata/citations
+        BAD_PATTERNS = [
+            "adapted from",
+            "source:",
+            "sources:",
+            "http://",
+            "https://",
+            "www.",
+        ]
+        if any(p in claim_l for p in BAD_PATTERNS):
             return False
+
+        tokens = self.tokenize(claim)
+        if len(tokens) < 4:
+            return False
+
         last_word = claim.strip().rstrip(".").split()[-1].lower()
         if last_word in {"including", "such", "namely", "follows", "following", "as"}:
             return False
+
         doc = nlp(claim)
-        # summary sentence — demonstrative subject
+
+        # reject vague summary sentences
         subject = next((t for t in doc if t.dep_ == "nsubj"), None)
         if subject and subject.text.lower() in {"these", "this", "those", "such"}:
             return False
-        # summary sentence — interpretive root verb
+
         root = next((t for t in doc if t.dep_ == "ROOT"), None)
         SUMMARY_VERBS = {
             "reflect", "demonstrate", "highlight", "illustrate", "suggest",
@@ -176,10 +194,30 @@ class Halgorithm:
         }
         if root and root.lemma_.lower() in SUMMARY_VERBS:
             return False
-        # no verifiable anchor — no named entity, number, or proper noun
-        if not any(doc.ents) and not any(t.like_num for t in doc) and not any(t.pos_ == "PROPN" for t in doc):
-            return False
-        return True
+
+        # NEW: accept definition/explanation claims
+        TECHNICAL_ANCHORS = {
+            "class", "classes", "object", "objects", "instance", "instances",
+            "attribute", "attributes", "method", "methods", "function",
+            "functions", "type", "data", "namespace", "inheritance",
+            "module", "argument", "variable", "state"
+        }
+
+        if any(t in TECHNICAL_ANCHORS for t in tokens):
+            return True
+
+        # original anchor logic, but now only fallback
+        if any(doc.ents) or any(t.like_num for t in doc) or any(t.pos_ == "PROPN" for t in doc):
+            return True
+
+        # accept normal factual sentences with subject + verb
+        has_subject = any(t.dep_ in {"nsubj", "nsubjpass"} for t in doc)
+        has_verb = any(t.pos_ in {"VERB", "AUX"} for t in doc)
+
+        if has_subject and has_verb and len(tokens) >= 6:
+            return True
+
+        return False
 
     # ── Unsupported terms ─────────────────────────────────────────────────────
 
@@ -263,7 +301,9 @@ class Halgorithm:
             }
 
         # score-only status — no hardcoded word lists
-        if best_score >= 0.65:
+        supported_threshold = max(threshold + 0.25, 0.50)
+
+        if best_score >= supported_threshold:
             status = "SUPPORTED"
         elif best_score >= threshold:
             status = "WEAK_SUPPORT"
