@@ -1,180 +1,47 @@
-<p align="center">
-  <img src="assets/Tangible.png" style="width: 60%; height: auto;">
-</p>
-
 # Halgorithem
 
-[![Hits](https://hits.sh/github.com/TangibleResearch/Halgorithem.svg?label=Visits)](https://hits.sh/github.com/TangibleResearch/Halgorithem/)
+Deterministic hallucination detection for checking AI output against trusted source material.
 
-![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
-[![GitHub Stars](https://img.shields.io/github/stars/TangibleResearch/Halgorithem?style=social)](https://github.com/TangibleResearch/Halgorithem/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/TangibleResearch/Halgorithem?style=social)](https://github.com/TangibleResearch/Halgorithem/network/members)
-[![GitHub Watchers](https://img.shields.io/github/watchers/TangibleResearch/Halgorithem?style=social)](https://github.com/TangibleResearch/Halgorithem/watchers)
-[![GitHub Release](https://img.shields.io/github/v/release/TangibleResearch/Halgorithem?color=brightgreen&logo=github)](https://github.com/TangibleResearch/Halgorithem/releases)
-[![GitHub Issues](https://img.shields.io/github/issues/TangibleResearch/Halgorithem)](https://github.com/TangibleResearch/Halgorithem/issues)
-> Detecting AI hallucinations before they spread through a workflow.
-
-Halgorithem is a deterministic hallucination detection engine for checking AI output against trusted source material. The verifier itself does not call an LLM. It uses parsing, sentence chunking, embeddings, entity extraction, number checks, negation checks, source scoring, evidence retrieval, and confidence scoring to decide whether each factual claim is supported by the supplied sources.
-
-The optional `engine.py` wrapper can call OpenAI to generate an answer, but the verification package in `Halgorithem/` is rule-based and model-free in the generative sense.
+Halgorithem takes source documents and AI output, extracts factual claims, retrieves the closest evidence, and labels each claim as supported, weakly supported, contradicted, hallucinated, or an unverifiable denial.
 
 ## What It Does
 
-Halgorithem answers one question:
+- Verifies AI-generated factual claims against supplied sources.
+- Splits multi-fact text into atomic claims.
+- Retrieves evidence chunks from one or more sources.
+- Detects date, number, unit, negation, source-qualifier, and simple entity-role conflicts.
+- Flags time-sensitive claims such as "current", "latest", "today", and "now".
+- Returns a structured result for every extracted claim.
 
-> Given source documents and an AI response, which claims are supported, weakly supported, contradicted, hallucinated, or unverifiable?
+## What It Does Not Do
 
-It returns claim-level results with:
+- It does not prove truth in the real world.
+- It does not browse the web unless you use the optional URL wrapper.
+- It does not replace source quality review.
+- It does not guarantee perfect paraphrase understanding, especially with the local fallback embedder.
+- It does not use an LLM for verification.
 
-- `status`: `SUPPORTED`, `WEAK_SUPPORT`, `CONTRADICTION`, `HALLUCINATION`, or `UNVERIFIABLE_DENIAL`
-- `confidence`: normalized confidence score from `0.0` to `1.0`
-- `score`: semantic evidence score
-- `claim`: the atomic factual claim being checked
-- `matched_source`: source file or URL for the closest evidence
-- `chunk_text`: closest evidence chunk
-- `evidence`: top ranked evidence chunks, not just the best match
-- `unsupported_terms`: proper nouns or numbers that appear in the claim but not the source material
-- `reason`: contradiction reason when one is detected
-- `warning`: optional risk hint, such as a time-sensitive "current/latest" claim
-
-## Core Pipeline
-
-```text
-AI output
-  -> clean text
-  -> split into sentences
-  -> extract atomic claims
-  -> filter meaningful factual claims
-  -> retrieve top evidence chunks
-  -> check contradictions
-  -> score confidence
-  -> return claim-level report
-```
-
-Source documents follow a matching path:
-
-```text
-source text
-  -> clean text
-  -> split into sentences
-  -> chunk with overlap
-  -> extract tokens, entities, numbers
-  -> score source quality
-  -> embed chunks
-  -> use for retrieval and verification
-```
-
-## New Smart Modules
-
-The verifier has been split into smaller modules so each part can get smarter without making `core.py` messy.
-
-| Module | Purpose | AI-Free? |
-|---|---|---|
-| `claim_extraction.py` | Splits AI output into smaller atomic factual claims. | Yes |
-| `retrieval.py` | Ranks the top evidence chunks for each claim. | Yes |
-| `evidence.py` | Converts ranked chunks into structured evidence records. | Yes |
-| `contradiction.py` | Detects number, date, and negation conflicts. | Yes |
-| `confidence.py` | Converts evidence strength and risk signals into final labels. | Yes |
-| `temporal.py` | Extracts years and checks time-sensitive/date claims. | Yes |
-| `source_quality.py` | Scores source reliability and scraped text quality. | Yes |
-| `text_processing.py` | Cleans text, tokenizes, extracts numbers/entities, and handles negation helpers. | Yes |
-| `math_utils.py` | Safely verifies simple math expressions. | Yes |
-| `web.py` | Scrapes URLs into source text. | Yes |
-| `engine.py` | Optional wrapper that can generate text with OpenAI before verification. | No, generation is optional |
-
-## Why Atomic Claims Matter
-
-A sentence can contain multiple facts:
-
-```text
-Apollo 11 launched in 1969 and landed at Tranquility Base.
-```
-
-Halgorithem now tries to split that into smaller claims:
-
-```text
-Apollo 11 launched in 1969.
-landed at Tranquility Base.
-```
-
-This improves detection because one part of a sentence can be correct while another part is unsupported or contradicted.
-
-## Verdicts
-
-### `SUPPORTED`
-
-The claim has strong evidence in the supplied documents and no major unsupported terms.
-
-### `WEAK_SUPPORT`
-
-The claim is close to the source material but not strong enough for full support. This usually means the source is semantically similar but missing a precise entity, number, or phrase.
-
-### `CONTRADICTION`
-
-The claim matches relevant source material but conflicts with it. Current checks include:
-
-- number mismatch
-- date/year mismatch
-- negation mismatch
-
-Time-sensitive claims such as "current", "latest", or "today" are marked with a warning so downstream apps can require fresher sources before trusting the claim.
-
-### `HALLUCINATION`
-
-The claim does not have enough support in the supplied documents.
-
-### `UNVERIFIABLE_DENIAL`
-
-The claim denies an unsupported entity or fact, such as "NASA did not invent BASIC" when the sources never mention NASA. This is not treated as the same thing as a positive hallucination, because the verifier cannot prove the denial from absence alone.
-
-## Quick Start
-
-Create and activate a virtual environment:
+## Install
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+python -m pip install -e .
 ```
 
-Install dependencies:
+Recommended NLP model:
 
 ```bash
-pip install -r requirements.txt
 python -m spacy download en_core_web_lg
 ```
 
-Run the local benchmark:
+Lightweight fallback:
 
 ```bash
-python bench.py
+python -m spacy download en_core_web_sm
 ```
 
-Run the TUI:
+If neither spaCy model is installed, Halgorithem falls back to `spacy.blank("en")` with reduced linguistic accuracy instead of crashing.
 
-```bash
-python tui.py
-```
-
-## Python Usage
-
-Verify AI output against local files:
-
-```python
-from Halgorithem import Halgorithm
-
-algo = Halgorithm(sentences_per_chunk=2, sentence_overlap=1)
-
-results = algo.compare_to_files(
-    truth_file_paths=["sources/basic.txt", "sources/basic2.txt"],
-    ai_output="BASIC was developed in 1964. BASIC was created by NASA.",
-    threshold=0.30,
-)
-
-for claim in results:
-    print(claim["status"], claim["confidence"], claim["claim"])
-```
-
-Verify against in-memory source text:
+## Quick Start
 
 ```python
 from Halgorithem import Halgorithm
@@ -185,123 +52,157 @@ results = algo.compare_to_docs(
     truth_docs=[
         {
             "file_id": 1,
-            "file_path": "internal_note",
-            "text": "BASIC was developed at Dartmouth College in 1964.",
+            "file_path": "source.txt",
+            "text": "BASIC was created in 1964 by John Kemeny at Dartmouth College.",
         }
     ],
-    ai_output="BASIC was developed at Dartmouth College in 1964.",
+    ai_output="BASIC was created in 1972 by NASA.",
+)
+
+for result in results:
+    print(result["status"], result["claim"], result["reason"])
+```
+
+## Python API
+
+```python
+from Halgorithem import Halgorithm
+
+algo = Halgorithm(sentences_per_chunk=2, sentence_overlap=1)
+```
+
+Verify in-memory documents:
+
+```python
+algo.compare_to_docs(
+    truth_docs="BASIC was created in 1964.",
+    ai_output="BASIC was created in 1964.",
 )
 ```
 
-Use the optional generation wrapper:
+Verify files:
+
+```python
+algo.compare_to_files(
+    truth_file_paths=["sources/basic.txt"],
+    ai_output="BASIC was created by NASA.",
+)
+```
+
+Optional generation wrapper:
 
 ```python
 from engine import run
 
 result = run(
-    prompt="What was Apollo 11?",
-    urls=["https://en.wikipedia.org/wiki/Apollo_11"],
-    threshold=0.30,
+    prompt="Summarize this source.",
+    truth_file_paths=["sources/basic.txt"],
 )
-
-print(result["summary"])
 ```
 
-## Example Result
+The wrapper may call OpenAI for generation. The verifier in `Halgorithem/` remains deterministic.
 
-```python
-{
-    "status": "CONTRADICTION",
-    "claim": "BASIC was developed in 1972.",
-    "score": 0.71,
-    "confidence": 0.58,
-    "reason": "Date mismatch",
-    "matched_source": "sources/basic.txt",
-    "matched_chunk_id": 1,
-    "chunk_text": "BASIC was developed at Dartmouth College in 1964.",
-    "evidence": [
-        {
-            "source": "sources/basic.txt",
-            "chunk_id": 1,
-            "score": 0.71,
-            "text": "BASIC was developed at Dartmouth College in 1964."
-        }
-    ]
-}
+## CLI Usage
+
+Interactive terminal UI:
+
+```bash
+python tui.py
 ```
 
-## Project Layout
-
-```text
-Halgorithem/
-  Halgorithem/
-    __init__.py
-    core.py
-    claim_extraction.py
-    confidence.py
-    contradiction.py
-    evidence.py
-    math_utils.py
-    nlp.py
-    retrieval.py
-    source_quality.py
-    temporal.py
-    text_processing.py
-    web.py
-  assets/
-  sources/
-  bench.py
-  engine.py
-  requirements.txt
-  test.py
-  tui.py
-```
-
-## Design Principles
-
-- The verifier should not depend on generated explanations from another AI system.
-- Every claim should be traceable to source text.
-- Evidence should be inspectable by humans.
-- Contradictions should explain the exact conflict where possible.
-- Thresholds should be adjustable.
-- The core should stay modular enough for new checkers to be added safely.
-
-## Current Limits
-
-Halgorithem is not a full theorem prover and not a replacement for human review. It can miss:
-
-- claims that require deep multi-hop reasoning
-- claims that need current real-world knowledge not present in the sources
-- paraphrases that are too far from the source chunk
-- table-heavy facts if scraping loses structure
-- claims where the source itself is wrong
-
-The best results come from high-quality source documents with clear factual wording.
-
-## Benchmark
-
-The included benchmark checks a small BASIC-language dataset:
+Benchmark:
 
 ```bash
 python bench.py
 ```
 
-The benchmark covers:
+## Tests
+
+```bash
+python -m pytest
+```
+
+The pytest suite is designed to be network-free and uses local documents.
+
+## Benchmark
+
+`bench.py` runs a release benchmark across:
 
 - supported claims
-- weakly supported claims
-- unsupported claims
-- contradiction claims
-
-Future benchmark work should add:
-
-- date-heavy claims
+- paraphrases
+- weak support
+- hallucinations
+- date mismatches
 - entity-role swaps
-- unit conversion errors
+- unit errors
 - current/latest claims
+- table-like facts
 - multi-source disagreement
-- table extraction cases
+- denial claims
+- missing-source cases
 
-## License
+It reports accuracy, accuracy by category, a confusion matrix, failures, temporal warning checks, and a pass/fail threshold.
 
-See `LICENCE`.
+## Output Schema
+
+Every claim result includes:
+
+```python
+{
+    "claim": str,
+    "status": "SUPPORTED | WEAK_SUPPORT | CONTRADICTION | HALLUCINATION | UNVERIFIABLE_DENIAL | ERROR",
+    "confidence": float,
+    "score": float,
+    "matched_source": str | None,
+    "matched_chunk_id": int | None,
+    "matched_chunk": str,
+    "chunk_text": str,
+    "evidence": list,
+    "unsupported_terms": list[str],
+    "reason": str,
+    "warning": str | None,
+}
+```
+
+## Verdict Meanings
+
+- `SUPPORTED`: strong evidence is present in the supplied sources.
+- `WEAK_SUPPORT`: related evidence exists, but the claim is inferential or not fully direct.
+- `CONTRADICTION`: relevant source evidence conflicts with the claim.
+- `HALLUCINATION`: the claim lacks adequate source support.
+- `UNVERIFIABLE_DENIAL`: the claim denies a fact or entity absent from the sources, so absence alone cannot prove it.
+- `ERROR`: the verifier could not parse or evaluate the claim, mostly for malformed math.
+
+## Runtime Hardening
+
+Halgorithem handles:
+
+- missing files
+- empty sources
+- empty AI output
+- malformed `truth_docs`
+- missing `text` fields
+- bad UTF-8 file encodings
+- no extracted claims
+- math parse errors
+- missing spaCy or embedding models
+
+## Limitations
+
+- Rule-based entity-role detection handles common simple patterns, not arbitrary grammar.
+- Local hashing embeddings are deterministic and CI-safe but less semantic than sentence-transformers.
+- Multi-source disagreement is surfaced when the source qualifier is explicit.
+- Table-like facts work best when row values are near each other in text.
+- Current/latest claims are warned, not externally refreshed.
+
+## Roadmap
+
+- Optional structured table parser.
+- Better contradiction handling for passive and nested clauses.
+- Calibrated benchmark sets by domain.
+- Machine-readable benchmark artifacts.
+- More CLI commands beyond the interactive TUI.
+
+## Release Readiness
+
+v1.0 readiness means tests pass, the benchmark meets its threshold, CI passes, packaging installs, README limitations are documented, and the release checklist is complete.

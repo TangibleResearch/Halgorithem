@@ -1,8 +1,11 @@
+import os
 import re
+import warnings
 from pathlib import Path
 
 import pysbd
-from sentence_transformers import SentenceTransformer, util
+from sklearn.feature_extraction.text import HashingVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 from .claim_extraction import extract_claims
 from .confidence import classify_support, confidence_score
@@ -12,6 +15,7 @@ from .math_utils import numbers_close, safe_eval
 from .retrieval import rank_chunks
 from .source_quality import score_source
 from .temporal import temporal_warning
+from .temporal import extract_years
 from .text_processing import (
     clean_text,
     extract_entities,
@@ -24,7 +28,47 @@ from .text_processing import (
 from .nlp import nlp
 
 
-_embedder = SentenceTransformer("all-MiniLM-L6-v2")
+class LocalEmbedder:
+    def __init__(self):
+        self.vectorizer = HashingVectorizer(
+            n_features=2 ** 14,
+            alternate_sign=False,
+            norm="l2",
+            ngram_range=(1, 2),
+        )
+
+    def encode(self, text, convert_to_tensor=False):
+        return self.vectorizer.transform([text or ""])
+
+    def similarity(self, left, right):
+        return float(cosine_similarity(left, right)[0][0])
+
+
+def _load_embedder():
+    mode = os.getenv("HALGORITHEM_EMBEDDER", "local").lower()
+    if mode in {"sentence-transformers", "sentence_transformers", "st"}:
+        try:
+            from sentence_transformers import SentenceTransformer, util
+
+            model = SentenceTransformer(os.getenv("HALGORITHEM_EMBEDDING_MODEL", "all-MiniLM-L6-v2"))
+
+            class SentenceTransformerEmbedder:
+                def encode(self, text, convert_to_tensor=False):
+                    return model.encode(text or "", convert_to_tensor=True)
+
+                def similarity(self, left, right):
+                    return float(util.cos_sim(left, right))
+
+            return SentenceTransformerEmbedder()
+        except Exception as exc:
+            warnings.warn(
+                f"Could not load sentence-transformers embedder ({exc}); using local hashing embedder.",
+                RuntimeWarning,
+            )
+    return LocalEmbedder()
+
+
+_embedder = _load_embedder()
 INITIAL_RE = re.compile(r"\b[a-z]\.$", re.IGNORECASE)
 
 
@@ -79,7 +123,10 @@ class Halgorithm:
             raise FileNotFoundError(f"File not found: {file_path}")
         if not path.is_file():
             raise ValueError(f"Not a file: {file_path}")
-        return path.read_text(encoding="utf-8")
+        try:
+            return path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"Could not read {file_path!s} as UTF-8 text.") from exc
 
     def load_files(self, file_paths):
         return [
@@ -120,7 +167,7 @@ class Halgorithm:
     def support_score(self, claim, chunk):
         # semantic similarity via sentence-transformers — topic-agnostic
         claim_emb = _embedder.encode(claim, convert_to_tensor=True)
-        return float(util.cos_sim(claim_emb, chunk["embedding"]))
+        return _embedder.similarity(claim_emb, chunk["embedding"])
 
     # ── Math claims ───────────────────────────────────────────────────────────
 
@@ -130,19 +177,48 @@ class Halgorithm:
         return "SOURCE"
 
     def verify_math_claim(self, claim):
+        base = self.empty_result(claim, status="ERROR", reason="Malformed math claim", result_type="MATH")
         if "=" not in claim:
-            return {"status": "UNKNOWN", "claim": claim, "reason": "No expression found"}
+            base["reason"] = "No expression found"
+            return base
         parts = claim.split("=", 1)
         if len(parts) != 2:
-            return {"status": "UNKNOWN", "claim": claim, "reason": "Malformed expression"}
+            base["reason"] = "Malformed expression"
+            return base
         try:
             left, right = safe_eval(parts[0].strip()), safe_eval(parts[1].strip())
             if numbers_close(left, right):
-                return {"status": "SUPPORTED", "claim": claim, "type": "MATH"}
-            return {"status": "CONTRADICTION", "claim": claim, "type": "MATH",
-                    "expected": left, "got": right}
+                result = self.empty_result(claim, status="SUPPORTED", reason="", result_type="MATH")
+                result["confidence"] = 1.0
+                result["score"] = 1.0
+                return result
+            result = self.empty_result(claim, status="CONTRADICTION", reason="Math mismatch", result_type="MATH")
+            result["expected"] = left
+            result["got"] = right
+            result["confidence"] = 1.0
+            result["score"] = 1.0
+            return result
         except Exception as e:
-            return {"status": "ERROR", "claim": claim, "reason": str(e), "type": "MATH"}
+            base["reason"] = str(e)
+            return base
+
+    def empty_result(self, claim, status="HALLUCINATION", reason="", result_type="SOURCE"):
+        return {
+            "claim": claim,
+            "status": status,
+            "confidence": 0.0,
+            "score": 0.0,
+            "matched_doc_id": None,
+            "matched_source": None,
+            "matched_chunk_id": None,
+            "matched_chunk": "",
+            "chunk_text": "",
+            "evidence": [],
+            "unsupported_terms": [],
+            "reason": reason,
+            "warning": None,
+            "type": result_type,
+        }
 
     # ── Number conflict ───────────────────────────────────────────────────────
 
@@ -245,12 +321,15 @@ class Halgorithm:
         content = {t.lemma_.lower() for t in doc if t.pos_ in {"PROPN", "NUM"} and not t.is_stop}
         relation_terms = set()
         lowered = claim.lower()
-        if re.search(r"\b(created|invented|developed|originated|came|built)\b", lowered):
+        if re.search(r"\b(created|invented|developed|originated|came|built|maintained|located|priced|report|reports)\b", lowered):
             relation_terms = {
                 t for t in unsupported
                 if t.isalnum()
                 and not t.isdigit()
-                and t not in {"created", "invented", "developed", "originated", "came", "built"}
+                and t not in {
+                    "created", "invented", "developed", "originated", "came",
+                    "built", "maintained", "located", "priced", "report", "reports"
+                }
             }
         return sorted(t for t in unsupported if t in content or t in relation_terms or (t.isdigit() and len(t) != 4))
 
@@ -271,21 +350,24 @@ class Halgorithm:
         best = best_evidence(candidates)
 
         if not best:
-            return {
-                "status": "HALLUCINATION", "claim": claim, "score": 0.0,
-                "confidence": 0.0,
-                "reason": "No matching chunk found",
-                "matched_doc_id": None, "matched_source": None,
-                "matched_chunk_id": None, "chunk_text": "",
-                "unsupported_terms": unsupported_terms,
-                "evidence": [],
-            }
+            result = self.empty_result(claim, status="HALLUCINATION", reason="No matching chunk found")
+            result["unsupported_terms"] = unsupported_terms
+            warning = temporal_warning(claim)
+            if warning:
+                result["warning"] = warning["warning"]
+                result["as_of_year"] = warning["as_of_year"]
+            return result
 
         best_chunk = candidates[0]["chunk"]
         best_score = candidates[0]["score"]
         contradiction = None
         contradiction_score = best_score
+        best_years = extract_years(best_chunk.get("text", ""))
+        claim_years = extract_years(claim)
+        best_has_claim_year = bool(claim_years and best_years and claim_years & best_years)
         for candidate in candidates:
+            if candidate["score"] < max(threshold, best_score * 0.75):
+                continue
             issue = find_contradiction(
                 claim=claim,
                 chunk=candidate["chunk"],
@@ -295,6 +377,8 @@ class Halgorithm:
                 threshold=threshold,
             )
             if issue:
+                if issue.get("reason") == "Date mismatch" and best_has_claim_year:
+                    continue
                 contradiction = issue
                 contradiction_score = candidate["score"]
                 break
@@ -320,9 +404,12 @@ class Halgorithm:
             "matched_doc_id": best["doc_id"],
             "matched_source": best["source"],
             "matched_chunk_id": best["chunk_id"],
+            "matched_chunk": best["text"],
             "chunk_text": best["text"],
             "unsupported_terms": unsupported_terms,
             "evidence": evidence,
+            "reason": "",
+            "warning": None,
         }
         if warning:
             result["warning"] = warning["warning"]
@@ -341,6 +428,8 @@ class Halgorithm:
     # ── Public API ────────────────────────────────────────────────────────────
 
     def compare_to_docs(self, truth_docs, ai_output, threshold=0.30):
+        if not ai_output or not str(ai_output).strip():
+            return []
         if isinstance(truth_docs, str):
             truth_docs = [{"file_id": 1, "file_path": "inline_text", "text": truth_docs}]
         elif truth_docs and isinstance(truth_docs[0], str):
@@ -348,13 +437,28 @@ class Halgorithm:
                 {"file_id": i, "file_path": f"inline_text_{i}", "text": t}
                 for i, t in enumerate(truth_docs, 1)
             ]
+        elif truth_docs is None:
+            raise ValueError("No source documents loaded. Provide non-empty truth_docs.")
+        elif not isinstance(truth_docs, list):
+            raise ValueError("truth_docs must be a string, list of strings, or list of document dictionaries.")
 
         all_chunks, all_truth_tokens = [], set()
-        for doc in truth_docs:
-            chunks = self.chunk_text(doc["text"], doc_id=doc["file_id"], source_name=doc["file_path"])
+        for i, doc in enumerate(truth_docs, 1):
+            if not isinstance(doc, dict):
+                raise ValueError("truth_docs entries must be strings or dictionaries.")
+            if "text" not in doc:
+                raise ValueError("truth_docs entries must include a 'text' field.")
+            text = doc.get("text") or ""
+            if not str(text).strip():
+                continue
+            doc_id = doc.get("file_id", i)
+            file_path = doc.get("file_path", f"inline_text_{i}")
+            chunks = self.chunk_text(text, doc_id=doc_id, source_name=file_path)
             all_chunks.extend(chunks)
             for chunk in chunks:
                 all_truth_tokens.update(chunk["tokens"])
+        if not all_chunks:
+            raise ValueError("No source documents loaded. Provide at least one non-empty source.")
 
         results = []
         claims = extract_claims(

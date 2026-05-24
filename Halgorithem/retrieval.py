@@ -14,6 +14,17 @@ def rank_chunks(
         raw_score = score_fn(claim, chunk)
         score = raw_score
         signals = []
+        claim_tokens = {t.lower() for t in claim.replace(".", " ").replace(",", " ").split() if t.strip()}
+        chunk_tokens = set(chunk.get("tokens", []))
+        content_tokens = {t for t in claim_tokens if len(t) > 2}
+        if content_tokens:
+            overlap = len(content_tokens & chunk_tokens) / len(content_tokens)
+            if overlap >= 0.85:
+                score = min(score + 0.18, 1.0)
+                signals.append("high_token_overlap")
+            elif overlap >= 0.60:
+                score = min(score + 0.10, 1.0)
+                signals.append("token_overlap")
 
         if claim_numbers and claim_numbers.issubset(set(chunk.get("numbers", []))):
             score = min(score + 0.10, 1.0)

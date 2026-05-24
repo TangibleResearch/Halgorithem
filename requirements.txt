@@ -1,21 +1,26 @@
-beautifulsoup4
-clean-text
-html2text
-markdown-it-py
-negspacy
-nltk
-openai
-pysbd
-quantulum3[classifier]
-requests
-rich
-scikit-learn
-sentence-transformers
-spacy
-sympy
-textacy
+beautifulsoup4>=4.12
+clean-text>=0.6
+html2text>=2024.2.26
+markdown-it-py>=3
+negspacy>=1.0
+nltk>=3.8
+openai>=1.0
+pysbd>=0.3
+quantulum3[classifier]>=0.9
+requests>=2.31
+rich>=13
+scikit-learn>=1.3
+sentence-transformers>=2.7
+spacy>=3.7
+sympy>=1.12
+textacy>=0.13
+stemming>=1.0
 
-# Note: this project loads the spaCy model en_core_web_lg at runtime.
-# Install it separately with:
+# Optional but recommended for best NLP accuracy:
 #   python -m spacy download en_core_web_lg
-stemming
+#
+# CI and lightweight installs may use:
+#   python -m spacy download en_core_web_sm
+#
+# If neither model is present, Halgorithem falls back to spacy.blank("en")
+# with reduced accuracy but without an import-time crash.
