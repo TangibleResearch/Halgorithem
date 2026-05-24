@@ -4,8 +4,14 @@
 
 # Halgorithem
 
-![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
+[![Hits](https://hits.sh/github.com/TangibleResearch/Halgorithem.svg?label=Visits)](https://hits.sh/github.com/TangibleResearch/Halgorithem/)
 
+![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
+[![GitHub Stars](https://img.shields.io/github/stars/TangibleResearch/Halgorithem?style=social)](https://github.com/TangibleResearch/Halgorithem/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/TangibleResearch/Halgorithem?style=social)](https://github.com/TangibleResearch/Halgorithem/network/members)
+[![GitHub Watchers](https://img.shields.io/github/watchers/TangibleResearch/Halgorithem?style=social)](https://github.com/TangibleResearch/Halgorithem/watchers)
+[![GitHub Release](https://img.shields.io/github/v/release/TangibleResearch/Halgorithem?color=brightgreen&logo=github)](https://github.com/TangibleResearch/Halgorithem/releases)
+[![GitHub Issues](https://img.shields.io/github/issues/TangibleResearch/Halgorithem)](https://github.com/TangibleResearch/Halgorithem/issues)
 > Detecting AI hallucinations before they spread through a workflow.
 
 Halgorithem is a deterministic hallucination detection engine for checking AI output against trusted source material. The verifier itself does not call an LLM. It uses parsing, sentence chunking, embeddings, entity extraction, number checks, negation checks, source scoring, evidence retrieval, and confidence scoring to decide whether each factual claim is supported by the supplied sources.

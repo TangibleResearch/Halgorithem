@@ -5,7 +5,6 @@ INFERENTIAL_TERMS = {
     "easy",
     "beginners",
     "learn",
-    "popular",
     "important",
     "significant",
     "influential",
@@ -46,7 +45,7 @@ def classify_support(score, threshold=0.30, contradiction=None, unsupported_term
         return "CONTRADICTION"
     if unsupported_terms and is_negative_claim(claim):
         return "UNVERIFIABLE_DENIAL"
-    if unsupported_terms and score < 0.75:
+    if unsupported_terms:
         return "HALLUCINATION"
     if is_inferential_claim(claim) and score >= threshold:
         return "WEAK_SUPPORT"

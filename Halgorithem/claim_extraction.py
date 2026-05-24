@@ -16,7 +16,14 @@ def _has_factual_shape(text):
     has_subject = any(t.dep_ in {"nsubj", "nsubjpass"} for t in doc)
     has_verb = any(t.pos_ in {"VERB", "AUX"} for t in doc)
     has_anchor = any(doc.ents) or any(t.like_num for t in doc) or any(t.pos_ == "PROPN" for t in doc)
-    return has_anchor or (has_subject and has_verb)
+    tokens = {t.text.lower() for t in doc if not t.is_punct and not t.is_space}
+    technical_anchors = {"language", "programming"}
+    factual_relation_verbs = {
+        "create", "invent", "develop", "originate", "build", "design", "use",
+        "interpret", "allow", "become"
+    }
+    has_relation_verb = any(t.lemma_.lower() in factual_relation_verbs for t in doc)
+    return has_anchor or (has_subject and has_verb) or bool(tokens & technical_anchors) or has_relation_verb
 
 
 def _has_event_verb(text):

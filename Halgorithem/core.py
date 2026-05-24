@@ -178,8 +178,6 @@ class Halgorithm:
         doc = nlp(claim)
 
         has_anchor = any(doc.ents) or any(t.like_num for t in doc) or any(t.pos_ == "PROPN" for t in doc)
-        if len(tokens) < 4 and not has_anchor:
-            return False
 
         # reject vague summary sentences
         subject = next((t for t in doc if t.dep_ == "nsubj"), None)
@@ -200,15 +198,25 @@ class Halgorithm:
             "class", "classes", "object", "objects", "instance", "instances",
             "attribute", "attributes", "method", "methods", "function",
             "functions", "type", "data", "namespace", "inheritance",
-            "module", "argument", "variable", "state"
+            "module", "argument", "variable", "state", "language", "programming"
         }
 
         if any(t in TECHNICAL_ANCHORS for t in tokens):
             return True
 
+        FACTUAL_RELATION_VERBS = {
+            "create", "invent", "develop", "originate", "build", "design", "use",
+            "interpret", "allow", "become"
+        }
+        if any(t.lemma_.lower() in FACTUAL_RELATION_VERBS for t in doc) and len(tokens) >= 3:
+            return True
+
         # original anchor logic, but now only fallback
         if has_anchor:
             return True
+
+        if len(tokens) < 4:
+            return False
 
         # accept normal factual sentences with subject + verb
         has_subject = any(t.dep_ in {"nsubj", "nsubjpass"} for t in doc)
@@ -235,7 +243,16 @@ class Halgorithm:
         doc = nlp(claim)
         # only proper nouns and numbers are real hallucination signals
         content = {t.lemma_.lower() for t in doc if t.pos_ in {"PROPN", "NUM"} and not t.is_stop}
-        return sorted(t for t in unsupported if t in content or (t.isdigit() and len(t) != 4))
+        relation_terms = set()
+        lowered = claim.lower()
+        if re.search(r"\b(created|invented|developed|originated|came|built)\b", lowered):
+            relation_terms = {
+                t for t in unsupported
+                if t.isalnum()
+                and not t.isdigit()
+                and t not in {"created", "invented", "developed", "originated", "came", "built"}
+            }
+        return sorted(t for t in unsupported if t in content or t in relation_terms or (t.isdigit() and len(t) != 4))
 
     # ── Core claim checker ────────────────────────────────────────────────────
 
@@ -266,14 +283,21 @@ class Halgorithm:
 
         best_chunk = candidates[0]["chunk"]
         best_score = candidates[0]["score"]
-        contradiction = find_contradiction(
-            claim=claim,
-            chunk=best_chunk,
-            extract_numbers=self.extract_numbers,
-            has_negation_mismatch=self.has_negation_mismatch,
-            score=best_score,
-            threshold=threshold,
-        )
+        contradiction = None
+        contradiction_score = best_score
+        for candidate in candidates:
+            issue = find_contradiction(
+                claim=claim,
+                chunk=candidate["chunk"],
+                extract_numbers=self.extract_numbers,
+                has_negation_mismatch=self.has_negation_mismatch,
+                score=candidate["score"],
+                threshold=threshold,
+            )
+            if issue:
+                contradiction = issue
+                contradiction_score = candidate["score"]
+                break
         status = classify_support(
             score=best_score,
             threshold=threshold,
@@ -305,6 +329,7 @@ class Halgorithm:
             result["as_of_year"] = warning["as_of_year"]
         if contradiction:
             result["reason"] = contradiction["reason"]
+            result["contradiction_score"] = contradiction_score
             if "claim_numbers" in contradiction:
                 result["ai_numbers"] = contradiction["claim_numbers"]
                 result["truth_numbers"] = contradiction["truth_numbers"]
