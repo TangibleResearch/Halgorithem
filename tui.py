@@ -53,7 +53,7 @@ def collect_inputs():
     if existing_key:
         console.print(f"[dim]Using existing OPENAI_API_KEY ({existing_key[:4]}...)[/dim]")
     else:
-        api_key = Prompt.ask("[bold green]OpenAI API key[/bold green]", password=True)
+        api_key = Prompt.ask("[bold green]OpenAI API key[/bold green]")
         if not api_key.strip():
             console.print("[red]No API key provided. Exiting.[/red]")
             raise SystemExit(1)
@@ -186,6 +186,13 @@ def render_results(source_docs, ai_output, verification, config):
     config_table.add_row("Sentences/chunk", str(config["sentences_per_chunk"]))
     config_table.add_row("Overlap", str(config["sentence_overlap"]))
     config_table.add_row("Sources", str(len(source_docs)))
+    diagnostics = verification.get("diagnostics") or {}
+    if diagnostics:
+        config_table.add_row("Embedder", str(diagnostics.get("embedder", "unknown")))
+        if diagnostics.get("embedding_model"):
+            config_table.add_row("Embedding model", str(diagnostics["embedding_model"]))
+        if diagnostics.get("embedding_fallback_reason"):
+            config_table.add_row("Fallback", str(diagnostics["embedding_fallback_reason"])[:80])
     console.print(config_table)
     console.print()
 

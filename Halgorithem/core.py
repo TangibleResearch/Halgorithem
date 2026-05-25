@@ -9,7 +9,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from .claim_extraction import extract_claims
 from .confidence import classify_support, confidence_score
-from .contradiction import find_contradiction, numbers_conflict
+from .contradiction import equivalent_unit_numbers, find_contradiction, missing_location_evidence, numbers_conflict
 from .evidence import best_evidence, build_evidence
 from .math_utils import numbers_close, safe_eval
 from .retrieval import rank_chunks
@@ -29,6 +29,10 @@ from .nlp import nlp
 
 
 class LocalEmbedder:
+    kind = "lexical"
+    model_name = "HashingVectorizer"
+    fallback_reason = None
+
     def __init__(self):
         self.vectorizer = HashingVectorizer(
             n_features=2 ** 14,
@@ -45,38 +49,64 @@ class LocalEmbedder:
 
 
 def _load_embedder():
-    mode = os.getenv("HALGORITHEM_EMBEDDER", "local").lower()
-    if mode in {"sentence-transformers", "sentence_transformers", "st"}:
+    mode = os.getenv("HALGORITHEM_EMBEDDER", "semantic").lower()
+    if mode in {"semantic", "sentence-transformers", "sentence_transformers", "st"}:
         try:
             from sentence_transformers import SentenceTransformer, util
 
-            model = SentenceTransformer(os.getenv("HALGORITHEM_EMBEDDING_MODEL", "all-MiniLM-L6-v2"))
+            model_name = os.getenv("HALGORITHEM_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+            allow_download = os.getenv("HALGORITHEM_ALLOW_MODEL_DOWNLOAD", "").lower() in {"1", "true", "yes"}
+            model = SentenceTransformer(model_name, local_files_only=not allow_download)
 
             class SentenceTransformerEmbedder:
+                kind = "semantic"
+                fallback_reason = None
+                model_name = None
+
+                def __init__(self, loaded_model_name):
+                    self.model_name = loaded_model_name
+
                 def encode(self, text, convert_to_tensor=False):
                     return model.encode(text or "", convert_to_tensor=True)
 
                 def similarity(self, left, right):
                     return float(util.cos_sim(left, right))
 
-            return SentenceTransformerEmbedder()
+            return SentenceTransformerEmbedder(model_name)
         except Exception as exc:
             warnings.warn(
-                f"Could not load sentence-transformers embedder ({exc}); using local hashing embedder.",
+                f"Could not load semantic embedder ({exc}); using local lexical hashing embedder.",
                 RuntimeWarning,
             )
+            fallback = LocalEmbedder()
+            fallback.fallback_reason = str(exc)
+            return fallback
     return LocalEmbedder()
-
-
-_embedder = _load_embedder()
 INITIAL_RE = re.compile(r"\b[a-z]\.$", re.IGNORECASE)
 
 
 class Halgorithm:
-    def __init__(self, sentences_per_chunk=2, sentence_overlap=1):
+    def __init__(self, sentences_per_chunk=2, sentence_overlap=1, embedder=None):
+        sentences_per_chunk = int(sentences_per_chunk)
+        sentence_overlap = int(sentence_overlap)
+        if sentences_per_chunk < 1:
+            raise ValueError("sentences_per_chunk must be at least 1.")
+        if sentence_overlap < 0:
+            raise ValueError("sentence_overlap must be at least 0.")
+        if sentence_overlap >= sentences_per_chunk:
+            raise ValueError("sentence_overlap must be less than sentences_per_chunk.")
         self.sentences_per_chunk = sentences_per_chunk
         self.sentence_overlap = sentence_overlap
+        self.embedder = embedder or _load_embedder()
         self.parser = pysbd.Segmenter(language="en", clean=False)
+
+    @property
+    def diagnostics(self):
+        return {
+            "embedder": getattr(self.embedder, "kind", "unknown"),
+            "embedding_model": getattr(self.embedder, "model_name", None),
+            "embedding_fallback_reason": getattr(self.embedder, "fallback_reason", None),
+        }
 
     # ── Text prep ─────────────────────────────────────────────────────────────
 
@@ -154,7 +184,7 @@ class Halgorithm:
                 "tokens": self.tokenize(chunk),
                 "entities": self.extract_entities(chunk),
                 "numbers": self.extract_numbers(chunk),
-                "embedding": _embedder.encode(chunk, convert_to_tensor=True),
+                "embedding": self.embedder.encode(chunk, convert_to_tensor=True),
             })
             chunk_id += 1
             if end >= len(sentences):
@@ -166,13 +196,13 @@ class Halgorithm:
 
     def support_score(self, claim, chunk):
         # semantic similarity via sentence-transformers — topic-agnostic
-        claim_emb = _embedder.encode(claim, convert_to_tensor=True)
-        return _embedder.similarity(claim_emb, chunk["embedding"])
+        claim_emb = self.embedder.encode(claim, convert_to_tensor=True)
+        return self.embedder.similarity(claim_emb, chunk["embedding"])
 
     # ── Math claims ───────────────────────────────────────────────────────────
 
     def classify_claim_type(self, claim):
-        if re.search(r"\d+\s*[\+\-\*/%]\s*\d+|(?<!\w)=(?!\w)|\d+\s*(percent|%)", claim.lower()):
+        if re.search(r"\d+\s*[\+\-\*/%^]\s*\d+|(?<!\w)=(?!\w)", claim.lower()):
             return "MATH"
         return "SOURCE"
 
@@ -309,6 +339,13 @@ class Halgorithm:
     # ── Unsupported terms ─────────────────────────────────────────────────────
 
     def get_unsupported_terms(self, claim, all_truth_tokens):
+        def is_year_token(token):
+            try:
+                value = float(token)
+            except (TypeError, ValueError):
+                return False
+            return value.is_integer() and 1400 <= value <= 2100
+
         claim_tokens = set(self.tokenize(claim))
         all_truth_tokens = set(all_truth_tokens)
         unsupported = {
@@ -317,8 +354,14 @@ class Halgorithm:
             and not (self.get_synonyms(t) & all_truth_tokens)
         }
         doc = nlp(claim)
-        # only proper nouns and numbers are real hallucination signals
-        content = {t.lemma_.lower() for t in doc if t.pos_ in {"PROPN", "NUM"} and not t.is_stop}
+        # only proper nouns and non-year numbers are real hallucination signals
+        content = {
+            t.lemma_.lower()
+            for t in doc
+            if t.pos_ in {"PROPN", "NUM"}
+            and not t.is_stop
+            and not is_year_token(t.lemma_.lower())
+        }
         relation_terms = set()
         lowered = claim.lower()
         if re.search(r"\b(created|invented|developed|originated|came|built|maintained|located|priced|report|reports)\b", lowered):
@@ -331,7 +374,18 @@ class Halgorithm:
                     "built", "maintained", "located", "priced", "report", "reports"
                 }
             }
-        return sorted(t for t in unsupported if t in content or t in relation_terms or (t.isdigit() and len(t) != 4))
+        identifier_terms = {
+            token
+            for token in re.findall(r"\b(?:product|model|version)\s+([a-z0-9]+)\b", lowered)
+            if token in unsupported
+        }
+        return sorted(
+            t for t in unsupported
+            if t in content
+            or t in relation_terms
+            or t in identifier_terms
+            or (t.replace(".", "", 1).isdigit() and not is_year_token(t))
+        )
 
     # ── Core claim checker ────────────────────────────────────────────────────
 
@@ -352,6 +406,7 @@ class Halgorithm:
         if not best:
             result = self.empty_result(claim, status="HALLUCINATION", reason="No matching chunk found")
             result["unsupported_terms"] = unsupported_terms
+            result.update(self.diagnostics)
             warning = temporal_warning(claim)
             if warning:
                 result["warning"] = warning["warning"]
@@ -360,6 +415,9 @@ class Halgorithm:
 
         best_chunk = candidates[0]["chunk"]
         best_score = candidates[0]["score"]
+        equivalent_numbers = equivalent_unit_numbers(claim, best_chunk.get("text", ""))
+        if equivalent_numbers:
+            unsupported_terms = [t for t in unsupported_terms if t not in equivalent_numbers]
         contradiction = None
         contradiction_score = best_score
         best_years = extract_years(best_chunk.get("text", ""))
@@ -382,6 +440,8 @@ class Halgorithm:
                 contradiction = issue
                 contradiction_score = candidate["score"]
                 break
+        if not contradiction and missing_location_evidence(claim, best_chunk.get("text", "")):
+            unsupported_terms = sorted(set(unsupported_terms) | {"location"})
         status = classify_support(
             score=best_score,
             threshold=threshold,
@@ -410,6 +470,7 @@ class Halgorithm:
             "evidence": evidence,
             "reason": "",
             "warning": None,
+            **self.diagnostics,
         }
         if warning:
             result["warning"] = warning["warning"]

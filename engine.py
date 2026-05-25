@@ -27,12 +27,7 @@ class Engine:
             return []
         docs = []
         with TemporaryDirectory(prefix="halgorithem-scrape-") as tmp:
-            prev = Path.cwd()
-            os.chdir(tmp)
-            try:
-                WebScraper(urls).scrape()
-            finally:
-                os.chdir(prev)
+            WebScraper(urls, output_dir=tmp).scrape()
             for i, url in enumerate(urls, 1):
                 f = Path(tmp) / f"file{i - 1}.txt"
                 if not f.exists():
@@ -70,7 +65,11 @@ class Engine:
             ai_output=ai_output,
             threshold=threshold,
         )
-        return {"claims": claims, "summary": self.summarize(claims)}
+        return {
+            "claims": claims,
+            "summary": self.summarize(claims),
+            "diagnostics": self.algo.diagnostics,
+        }
 
     def _load_sources(self, urls=None, truth_file_paths=None):
         return self.scrape_urls(urls or []) + self.load_truth_files(truth_file_paths or [])

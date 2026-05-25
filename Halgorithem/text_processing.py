@@ -129,7 +129,7 @@ def has_negation_mismatch(claim, chunk_text):
     if not claim_has_negation and not chunk_has_negation:
         negation_terms = {
             "no", "not", "never", "neither", "nor", "without", "didn't",
-            "doesn't", "wasn't", "isn't", "aren't", "can't", "cannot", "did"
+            "doesn't", "wasn't", "isn't", "aren't", "can't", "cannot"
         }
         claim_tokens = {t.text.lower() for t in claim_doc}
         chunk_tokens = {t.text.lower() for t in chunk_doc}

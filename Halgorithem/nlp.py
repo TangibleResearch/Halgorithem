@@ -8,7 +8,7 @@ SPACY_MODEL_WARNING = None
 
 def _load_spacy_model():
     global SPACY_MODEL, SPACY_MODEL_WARNING
-    for model_name in ("en_core_web_lg", "en_core_web_sm"):
+    for model_name in ("en_core_web_trf", "en_core_web_lg", "en_core_web_sm"):
         try:
             SPACY_MODEL = model_name
             return spacy.load(model_name)
@@ -17,9 +17,9 @@ def _load_spacy_model():
 
     SPACY_MODEL = "blank_en"
     SPACY_MODEL_WARNING = (
-        "spaCy model 'en_core_web_lg' or 'en_core_web_sm' is not installed; "
+        "spaCy model 'en_core_web_trf', 'en_core_web_lg', or 'en_core_web_sm' is not installed; "
         "falling back to spacy.blank('en'). Install one with "
-        "'python -m spacy download en_core_web_sm' for better accuracy."
+        "'python -m spacy download en_core_web_trf' for better accuracy."
     )
     blank = spacy.blank("en")
     blank.add_pipe("sentencizer")

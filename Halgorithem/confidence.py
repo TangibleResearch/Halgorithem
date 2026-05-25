@@ -41,15 +41,27 @@ def classify_support(score, threshold=0.30, contradiction=None, unsupported_term
     unsupported_terms = unsupported_terms or []
     supported_threshold = max(threshold + 0.10, 0.40)
 
-    hard_contradiction = contradiction and contradiction.get("reason") in {
-        "Date mismatch", "Number mismatch", "Unit mismatch", "Negation mismatch"
+    numeric_or_logical_contradiction = contradiction and contradiction.get("reason") in {
+        "Date mismatch",
+        "Number mismatch",
+        "Unit mismatch",
+        "Negation mismatch",
     }
-    if hard_contradiction:
+    relation_contradiction = contradiction and contradiction.get("reason") in {
+        "Location mismatch",
+        "Entity-role mismatch",
+        "Source qualifier mismatch",
+    }
+    if contradiction and contradiction.get("reason") == "Number mismatch" and unsupported_terms:
+        return "HALLUCINATION"
+    if numeric_or_logical_contradiction:
         return "CONTRADICTION"
     if unsupported_terms and is_negative_claim(claim):
         return "UNVERIFIABLE_DENIAL"
     if unsupported_terms:
         return "HALLUCINATION"
+    if relation_contradiction:
+        return "CONTRADICTION"
     if contradiction:
         return "CONTRADICTION"
     if is_inferential_claim(claim) and score >= 0.08:
@@ -58,6 +70,8 @@ def classify_support(score, threshold=0.30, contradiction=None, unsupported_term
         return "SUPPORTED"
     if score >= threshold:
         return "WEAK_SUPPORT"
+    if is_negative_claim(claim):
+        return "UNVERIFIABLE_DENIAL"
     return "HALLUCINATION"
 
 
