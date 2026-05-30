@@ -8,11 +8,21 @@ from quantulum3 import parser as qparser
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 import textacy.preprocessing as tprep
 
-from .nlp import WORDNET_AVAILABLE, nlp
+from .nlp import WORDNET_AVAILABLE, parse
 
 
 STOPWORDS = set(ENGLISH_STOP_WORDS)
 md = MarkdownIt()
+NUMBER_WORD_RE = re.compile(
+    r"\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|"
+    r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|"
+    r"eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|"
+    r"eighty|ninety|hundred|thousand|million|billion|trillion|"
+    r"first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|"
+    r"tenth|percent|percentage|dollars?|euros?|grams?|kilograms?|"
+    r"pounds?|meters?|centimeters?|kilometers?|miles?)\b",
+    re.IGNORECASE,
+)
 
 
 @lru_cache(maxsize=4096)
@@ -63,7 +73,7 @@ def clean_text(text):
 
 
 def tokenize(text):
-    doc = nlp(text)
+    doc = parse(text)
     return [
         t.text.lower() for t in doc
         if not t.is_punct and not t.is_space
@@ -72,7 +82,7 @@ def tokenize(text):
 
 
 def lemmatize_tokens(text):
-    doc = nlp(text)
+    doc = parse(text)
     return [
         t.lemma_.lower() for t in doc
         if not t.is_punct and not t.is_space
@@ -81,7 +91,11 @@ def lemmatize_tokens(text):
     ]
 
 
-def extract_numbers(text):
+@lru_cache(maxsize=4096)
+def _extract_numbers_cached(text):
+    text = text or ""
+    if not re.search(r"\d", text) and not NUMBER_WORD_RE.search(text):
+        return ()
     # quantulum3 handles "seven billion", "3.5 million", "$4.2B", ordinals
     try:
         quantities = qparser.parse(text)
@@ -100,11 +114,15 @@ def extract_numbers(text):
         if d not in seen:
             extracted.append(d)
             seen.add(d)
-    return extracted
+    return tuple(extracted)
+
+
+def extract_numbers(text):
+    return list(_extract_numbers_cached(text or ""))
 
 
 def extract_entities(text):
-    doc = nlp(text)
+    doc = parse(text)
     entities = set()
     for ent in doc.ents:
         tokens = tuple(
@@ -118,8 +136,8 @@ def extract_entities(text):
 
 def has_negation_mismatch(claim, chunk_text):
     # negspacy marks negated entities on the doc
-    claim_doc = nlp(claim)
-    chunk_doc = nlp(chunk_text)
+    claim_doc = parse(claim)
+    chunk_doc = parse(chunk_text)
     claim_has_negation = any(
         getattr(t._, "negex", False) for t in claim_doc
     )
@@ -129,7 +147,7 @@ def has_negation_mismatch(claim, chunk_text):
     if not claim_has_negation and not chunk_has_negation:
         negation_terms = {
             "no", "not", "never", "neither", "nor", "without", "didn't",
-            "doesn't", "wasn't", "isn't", "aren't", "can't", "cannot", "did"
+            "doesn't", "wasn't", "isn't", "aren't", "can't", "cannot"
         }
         claim_tokens = {t.text.lower() for t in claim_doc}
         chunk_tokens = {t.text.lower() for t in chunk_doc}

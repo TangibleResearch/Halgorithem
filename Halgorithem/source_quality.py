@@ -19,13 +19,15 @@ def score_source(source_name, text):
     host = parsed.netloc.lower().removeprefix("www.")
 
     score = 0.55
+    domain_matched = False
     for domain, domain_score in HIGH_TRUST_DOMAINS.items():
         if host == domain or host.endswith("." + domain):
             score = max(score, domain_score)
+            domain_matched = True
 
     if source_name.startswith("inline_text") or not parsed.scheme:
         score = max(score, 0.65)
-    if len(text.split()) < 80:
+    if not domain_matched and len(text.split()) < 80:
         score -= 0.15
     if text.count("\n") > len(text.split()) / 4:
         score -= 0.05

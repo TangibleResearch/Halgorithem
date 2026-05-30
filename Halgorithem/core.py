@@ -6,10 +6,16 @@ from pathlib import Path
 import pysbd
 from sklearn.feature_extraction.text import HashingVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from scipy import sparse
 
 from .claim_extraction import extract_claims
-from .confidence import classify_support, confidence_score
-from .contradiction import find_contradiction, numbers_conflict
+from .confidence import classify_support, confidence_score, is_negative_claim
+from .contradiction import (
+    equivalent_unit_numbers,
+    find_contradiction,
+    missing_location_evidence,
+    numbers_conflict,
+)
 from .evidence import best_evidence, build_evidence
 from .math_utils import numbers_close, safe_eval
 from .retrieval import rank_chunks
@@ -25,7 +31,7 @@ from .text_processing import (
     lemmatize_tokens,
     tokenize,
 )
-from .nlp import nlp
+from .nlp import parse
 
 
 class LocalEmbedder:
@@ -38,10 +44,18 @@ class LocalEmbedder:
         )
 
     def encode(self, text, convert_to_tensor=False):
+        if isinstance(text, (list, tuple)):
+            return self.vectorizer.transform([t or "" for t in text])
         return self.vectorizer.transform([text or ""])
 
     def similarity(self, left, right):
         return float(cosine_similarity(left, right)[0][0])
+
+    def similarity_many(self, left, rights):
+        if not rights:
+            return []
+        matrix = sparse.vstack(rights)
+        return [float(score) for score in cosine_similarity(left, matrix)[0]]
 
 
 def _load_embedder():
@@ -73,9 +87,18 @@ INITIAL_RE = re.compile(r"\b[a-z]\.$", re.IGNORECASE)
 
 
 class Halgorithm:
-    def __init__(self, sentences_per_chunk=2, sentence_overlap=1):
+    def __init__(self, sentences_per_chunk=2, sentence_overlap=1, embedder=None):
+        if sentences_per_chunk < 1:
+            raise ValueError("sentences_per_chunk must be at least 1.")
+        if sentence_overlap < 0:
+            raise ValueError("sentence_overlap must be non-negative.")
+        if sentence_overlap >= sentences_per_chunk:
+            raise ValueError("sentence_overlap must be smaller than sentences_per_chunk.")
         self.sentences_per_chunk = sentences_per_chunk
         self.sentence_overlap = sentence_overlap
+        self.embedder = embedder or _embedder
+        self._claim_embedding_cache = {}
+        self._nli_model = None
         self.parser = pysbd.Segmenter(language="en", clean=False)
 
     # ── Text prep ─────────────────────────────────────────────────────────────
@@ -152,9 +175,10 @@ class Halgorithm:
                 "sentence_end": min(end, len(sentences)),
                 "text": chunk,
                 "tokens": self.tokenize(chunk),
+                "lemmas": self.lemmatize_tokens(chunk),
                 "entities": self.extract_entities(chunk),
                 "numbers": self.extract_numbers(chunk),
-                "embedding": _embedder.encode(chunk, convert_to_tensor=True),
+                "embedding": self.embedder.encode(chunk, convert_to_tensor=True),
             })
             chunk_id += 1
             if end >= len(sentences):
@@ -165,14 +189,22 @@ class Halgorithm:
     # ── Scoring ───────────────────────────────────────────────────────────────
 
     def support_score(self, claim, chunk):
-        # semantic similarity via sentence-transformers — topic-agnostic
-        claim_emb = _embedder.encode(claim, convert_to_tensor=True)
-        return _embedder.similarity(claim_emb, chunk["embedding"])
+        return self._claim_score_fn(claim)(claim, chunk)
+
+    def _claim_score_fn(self, claim):
+        if claim not in self._claim_embedding_cache:
+            self._claim_embedding_cache[claim] = self.embedder.encode(claim, convert_to_tensor=True)
+        claim_emb = self._claim_embedding_cache[claim]
+
+        def score_fn(_claim, chunk):
+            return self.embedder.similarity(claim_emb, chunk["embedding"])
+
+        return score_fn
 
     # ── Math claims ───────────────────────────────────────────────────────────
 
     def classify_claim_type(self, claim):
-        if re.search(r"\d+\s*[\+\-\*/%]\s*\d+|(?<!\w)=(?!\w)|\d+\s*(percent|%)", claim.lower()):
+        if re.search(r"\d+\s*[\+\-\*/%]\s*\d+|(?<!\w)=(?!\w)", claim.lower()):
             return "MATH"
         return "SOURCE"
 
@@ -251,7 +283,7 @@ class Halgorithm:
         if last_word in {"including", "such", "namely", "follows", "following", "as"}:
             return False
 
-        doc = nlp(claim)
+        doc = parse(claim)
 
         has_anchor = any(doc.ents) or any(t.like_num for t in doc) or any(t.pos_ == "PROPN" for t in doc)
 
@@ -308,17 +340,24 @@ class Halgorithm:
 
     # ── Unsupported terms ─────────────────────────────────────────────────────
 
-    def get_unsupported_terms(self, claim, all_truth_tokens):
+    def get_unsupported_terms(self, claim, all_truth_tokens, all_truth_lemmas=None):
         claim_tokens = set(self.tokenize(claim))
         all_truth_tokens = set(all_truth_tokens)
+        all_truth_lemmas = set(all_truth_lemmas or [])
         unsupported = {
             t for t in claim_tokens
             if t not in all_truth_tokens
-            and not (self.get_synonyms(t) & all_truth_tokens)
+            and t not in all_truth_lemmas
+            and not (self.get_synonyms(t) & (all_truth_tokens | all_truth_lemmas))
         }
-        doc = nlp(claim)
+        doc = parse(claim)
         # only proper nouns and numbers are real hallucination signals
-        content = {t.lemma_.lower() for t in doc if t.pos_ in {"PROPN", "NUM"} and not t.is_stop}
+        content = {
+            t.lemma_.lower()
+            for t in doc
+            if t.pos_ in {"PROPN", "NUM"} and not t.is_stop
+            and not (t.like_num and len(t.text) == 4)
+        }
         relation_terms = set()
         lowered = claim.lower()
         if re.search(r"\b(created|invented|developed|originated|came|built|maintained|located|priced|report|reports)\b", lowered):
@@ -335,17 +374,37 @@ class Halgorithm:
 
     # ── Core claim checker ────────────────────────────────────────────────────
 
-    def check_claim_against_chunks(self, claim, chunks, all_truth_tokens, threshold=0.30):
+    def _nli_contradiction(self, claim, chunk_text):
+        try:
+            from .model_runtime import default_nli_model
+            from .checks.nli import sentence_nli
+        except Exception:
+            return None
+        if self._nli_model is None:
+            self._nli_model = default_nli_model()
+        verdict = sentence_nli(
+            claim,
+            document=None,
+            nli_model=self._nli_model,
+            hits=[{"sentence": chunk_text, "score": 1.0}],
+        )
+        if getattr(verdict, "label", None) == "CONTRADICTION":
+            return {"reason": "NLI contradiction", "nli_score": getattr(verdict, "score", None)}
+        return None
+
+    def check_claim_against_chunks(self, claim, chunks, all_truth_tokens, all_truth_lemmas=None, threshold=0.30):
+        score_fn = self._claim_score_fn(claim)
         candidates = rank_chunks(
             claim=claim,
             chunks=chunks,
-            score_fn=self.support_score,
+            score_fn=score_fn,
             extract_numbers=self.extract_numbers,
             has_negation_mismatch=self.has_negation_mismatch,
+            lemmatize_fn=self.lemmatize_tokens,
             threshold=threshold,
             top_k=5,
         )
-        unsupported_terms = self.get_unsupported_terms(claim, all_truth_tokens)
+        unsupported_terms = self.get_unsupported_terms(claim, all_truth_tokens, all_truth_lemmas)
         evidence = build_evidence(candidates)
         best = best_evidence(candidates)
 
@@ -360,6 +419,19 @@ class Halgorithm:
 
         best_chunk = candidates[0]["chunk"]
         best_score = candidates[0]["score"]
+        equivalent_numbers = equivalent_unit_numbers(claim, best_chunk.get("text", ""))
+        if equivalent_numbers:
+            unsupported_terms = [
+                term for term in unsupported_terms
+                if term not in equivalent_numbers and term.rstrip(".0") not in equivalent_numbers
+            ]
+        if missing_location_evidence(claim, best_chunk.get("text", "")):
+            location_terms = {
+                t.lemma_.lower()
+                for t in parse(claim)
+                if t.pos_ == "PROPN" and t.lemma_.lower() not in set(all_truth_lemmas or [])
+            }
+            unsupported_terms = sorted(set(unsupported_terms) | location_terms)
         contradiction = None
         contradiction_score = best_score
         best_years = extract_years(best_chunk.get("text", ""))
@@ -382,6 +454,8 @@ class Halgorithm:
                 contradiction = issue
                 contradiction_score = candidate["score"]
                 break
+        if not contradiction and candidates and not (unsupported_terms and is_negative_claim(claim)):
+            contradiction = self._nli_contradiction(claim, best_chunk.get("text", ""))
         status = classify_support(
             score=best_score,
             threshold=threshold,
@@ -442,7 +516,7 @@ class Halgorithm:
         elif not isinstance(truth_docs, list):
             raise ValueError("truth_docs must be a string, list of strings, or list of document dictionaries.")
 
-        all_chunks, all_truth_tokens = [], set()
+        all_chunks, all_truth_tokens, all_truth_lemmas = [], set(), set()
         for i, doc in enumerate(truth_docs, 1):
             if not isinstance(doc, dict):
                 raise ValueError("truth_docs entries must be strings or dictionaries.")
@@ -457,6 +531,7 @@ class Halgorithm:
             all_chunks.extend(chunks)
             for chunk in chunks:
                 all_truth_tokens.update(chunk["tokens"])
+                all_truth_lemmas.update(chunk.get("lemmas", []))
         if not all_chunks:
             raise ValueError("No source documents loaded. Provide at least one non-empty source.")
 
@@ -476,6 +551,7 @@ class Halgorithm:
                     claim=claim,
                     chunks=all_chunks,
                     all_truth_tokens=all_truth_tokens,
+                    all_truth_lemmas=all_truth_lemmas,
                     threshold=threshold,
                 )
             result["claim_id"] = claim_data["claim_id"]

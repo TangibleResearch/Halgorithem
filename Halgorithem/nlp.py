@@ -1,3 +1,6 @@
+from functools import lru_cache
+import threading
+
 import nltk
 import spacy
 from negspacy.negation import Negex
@@ -40,3 +43,20 @@ try:
     WORDNET_AVAILABLE = True
 except LookupError:
     WORDNET_AVAILABLE = False
+
+
+_parse_lock = threading.Lock()
+
+
+@lru_cache(maxsize=2048)
+def _cached_parse(text):
+    return nlp(text or "")
+
+
+def parse(text):
+    with _parse_lock:
+        return _cached_parse(text or "")
+
+
+parse.cache_info = _cached_parse.cache_info
+parse.cache_clear = _cached_parse.cache_clear

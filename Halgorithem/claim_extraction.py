@@ -1,18 +1,14 @@
 import re
 
-from .nlp import nlp
+from .nlp import parse
 
 
 CLAIM_SPLIT_RE = re.compile(r"\s*(?:;|\n+|\s+-\s+)\s*")
-CONJUNCTION_RE = re.compile(
-    r"\s+(?:and|but|while|whereas)\s+"
-    r"(?=(?:[A-Z][a-z]+|\d|it\b|he\b|she\b|they\b|the\b|a\b|an\b))",
-    re.IGNORECASE,
-)
+CONJUNCTION_RE = re.compile(r"\s+(?:and|but|while|whereas)\s+", re.IGNORECASE)
 
 
 def _has_factual_shape(text):
-    doc = nlp(text)
+    doc = parse(text)
     has_subject = any(t.dep_ in {"nsubj", "nsubjpass"} for t in doc)
     has_verb = any(t.pos_ in {"VERB", "AUX"} for t in doc)
     has_anchor = any(doc.ents) or any(t.like_num for t in doc) or any(t.pos_ == "PROPN" for t in doc)
@@ -27,7 +23,7 @@ def _has_factual_shape(text):
 
 
 def _has_event_verb(text):
-    doc = nlp(text)
+    doc = parse(text)
     return any(t.pos_ in {"VERB", "AUX"} for t in doc)
 
 

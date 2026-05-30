@@ -7,6 +7,9 @@ ROLE_VERBS = {
 }
 
 UNIT_ALIASES = {
+    "g": "gram",
+    "gram": "gram",
+    "grams": "gram",
     "kg": "kilogram",
     "kilogram": "kilogram",
     "kilograms": "kilogram",
@@ -36,6 +39,19 @@ UNIT_ALIASES = {
     "euros": "eur",
     "euro": "eur",
 }
+UNIT_TO_BASE = {
+    "gram": ("mass", 0.001),
+    "kilogram": ("mass", 1.0),
+    "pound": ("mass", 0.45359237),
+    "kilometer": ("length", 1000.0),
+    "meter": ("length", 1.0),
+    "centimeter": ("length", 0.01),
+    "mile": ("length", 1609.344),
+    "celsius": ("temperature_c", 1.0),
+    "fahrenheit": ("temperature_f", 1.0),
+    "usd": ("money", 1.0),
+    "eur": ("money", 1.0),
+}
 
 
 def numbers_conflict(claim, chunk, extract_numbers):
@@ -46,23 +62,26 @@ def numbers_conflict(claim, chunk, extract_numbers):
     if claim_numbers.issubset(truth_numbers):
         return None
 
-    def skip(number):
+    def skip_year(number):
         try:
             value = float(number)
-            return 1400 <= value <= 2100 or value <= 31
+            return 1400 <= value <= 2100
         except (ValueError, TypeError):
             return True
 
     for claim_number in claim_numbers:
-        if skip(claim_number):
+        if skip_year(claim_number):
             continue
         claim_value = float(claim_number)
         for truth_number in truth_numbers:
-            if skip(truth_number):
+            if skip_year(truth_number):
                 continue
             truth_value = float(truth_number)
             if claim_value == 0 or truth_value == 0:
                 continue
+            if 0 < min(claim_value, truth_value) <= 100:
+                if abs(claim_value - truth_value) / max(claim_value, truth_value) < 0.05:
+                    continue
             if min(claim_value, truth_value) / max(claim_value, truth_value) >= 0.5:
                 if claim_value != truth_value:
                     return {
@@ -84,12 +103,60 @@ def _units(text):
     return units
 
 
+def _quantities(text):
+    import re
+
+    quantities = []
+    for value, unit in re.findall(r"\b(\d+(?:\.\d+)?)\s*([A-Za-z$]+)\b", text or ""):
+        canonical = UNIT_ALIASES.get(unit.lower().replace("$", "usd"))
+        if canonical:
+            quantities.append((float(value), canonical))
+    return quantities
+
+
+def _base_value(value, unit):
+    dimension, multiplier = UNIT_TO_BASE[unit]
+    if dimension == "temperature_c":
+        return "temperature", value
+    if dimension == "temperature_f":
+        return "temperature", (value - 32) * 5 / 9
+    return dimension, value * multiplier
+
+
+def equivalent_unit_numbers(claim, chunk_text, tolerance=0.02):
+    claim_quantities = _quantities(claim)
+    truth_quantities = _quantities(chunk_text)
+    equivalents = set()
+    for claim_value, claim_unit in claim_quantities:
+        if claim_unit not in UNIT_TO_BASE:
+            continue
+        claim_dim, claim_base = _base_value(claim_value, claim_unit)
+        for truth_value, truth_unit in truth_quantities:
+            if truth_unit not in UNIT_TO_BASE:
+                continue
+            truth_dim, truth_base = _base_value(truth_value, truth_unit)
+            if claim_dim != truth_dim:
+                continue
+            denom = max(abs(claim_base), abs(truth_base), 1.0)
+            if abs(claim_base - truth_base) / denom <= tolerance:
+                equivalents.add(str(claim_value).rstrip("0").rstrip("."))
+                equivalents.add(str(truth_value).rstrip("0").rstrip("."))
+    return equivalents
+
+
 def unit_conflict(claim, chunk_text):
     claim_units = _units(claim)
     truth_units = _units(chunk_text)
     for value, units in claim_units.items():
         truth = truth_units.get(value)
         if truth and units.isdisjoint(truth):
+            claim_unit = next(iter(units))
+            truth_unit = next(iter(truth))
+            if claim_unit in UNIT_TO_BASE and truth_unit in UNIT_TO_BASE:
+                claim_dim, _ = UNIT_TO_BASE[claim_unit]
+                truth_dim, _ = UNIT_TO_BASE[truth_unit]
+                if claim_dim == truth_dim and equivalent_unit_numbers(claim, chunk_text):
+                    continue
             return {
                 "reason": "Unit mismatch",
                 "claim_units": sorted(units),
@@ -135,6 +202,30 @@ def source_qualifier_conflict(claim, chunk_text):
             "truth_sources": sorted(truth_reports),
         }
     return None
+
+
+def location_conflict(claim, chunk_text):
+    import re
+
+    pattern = r"\b(?:in|at|from|near)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})"
+    claim_locations = {m.group(1).lower() for m in re.finditer(pattern, claim or "")}
+    truth_locations = {m.group(1).lower() for m in re.finditer(pattern, chunk_text or "")}
+    if claim_locations and truth_locations and claim_locations.isdisjoint(truth_locations):
+        return {
+            "reason": "Location mismatch",
+            "claim_locations": sorted(claim_locations),
+            "truth_locations": sorted(truth_locations),
+        }
+    return None
+
+
+def missing_location_evidence(claim, chunk_text):
+    import re
+
+    pattern = r"\b(?:in|at|from|near)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})"
+    claim_locations = {m.group(1).lower() for m in re.finditer(pattern, claim or "")}
+    truth_locations = {m.group(1).lower() for m in re.finditer(pattern, chunk_text or "")}
+    return bool(claim_locations and not (claim_locations & truth_locations))
 
 
 def entity_role_conflict(claim, chunk_text):
@@ -196,6 +287,10 @@ def find_contradiction(claim, chunk, extract_numbers, has_negation_mismatch, sco
     source_issue = source_qualifier_conflict(claim, chunk.get("text", ""))
     if source_issue and score >= threshold:
         return source_issue
+
+    location_issue = location_conflict(claim, chunk.get("text", ""))
+    if location_issue and score >= threshold:
+        return location_issue
 
     temporal_issue = temporal_conflict(claim, chunk.get("text", ""))
     if temporal_issue and score >= threshold:

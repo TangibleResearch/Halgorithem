@@ -43,6 +43,26 @@ If neither spaCy model is installed, Halgorithem falls back to `spacy.blank("en"
 
 ## Quick Start
 
+Recommended high-accuracy verifier:
+
+```python
+from Halgorithem import verify
+
+results = verify(
+    docs="BASIC was created in 1964 by John Kemeny at Dartmouth College.",
+    response_text="BASIC was created in 1964.",
+)
+
+for result in results:
+    print(result.verdict, result.confidence, result.diagnostics)
+```
+
+The `verify()` helper and `HalgorithemVerifier` return dataclass results and use the newer similarity, NLI, atomic-claim, and vote-fusion pipeline. This is the preferred API for new integrations.
+
+Vote fusion keeps support and contradiction evidence separate. Atomic scores intentionally use `[-1, 1]`, where negative values represent contradiction strength. NLI checks also expose `model_quality`: the built-in rule-based fallback is weighted lower than a transformer-backed NLI model that reports full quality.
+
+Legacy chunk API:
+
 ```python
 from Halgorithem import Halgorithm
 
@@ -63,7 +83,23 @@ for result in results:
     print(result["status"], result["claim"], result["reason"])
 ```
 
+`Halgorithm.compare_to_docs()` remains supported for compatibility and returns dictionaries. It uses the lower-level chunk scoring path, so its output shape differs from `verify()` / `HalgorithemVerifier`.
+
 ## Python API
+
+Preferred verifier:
+
+```python
+from Halgorithem import HalgorithemVerifier
+
+with HalgorithemVerifier() as verifier:
+    results = verifier.verify(
+        docs="BASIC was created in 1964.",
+        response_text="BASIC was created in 1964.",
+    )
+```
+
+Legacy verifier:
 
 ```python
 from Halgorithem import Halgorithm
@@ -145,7 +181,21 @@ It reports accuracy, accuracy by category, a confusion matrix, failures, tempora
 
 ## Output Schema
 
-Every claim result includes:
+The preferred verifier returns `VerificationResult` dataclasses:
+
+```python
+{
+    "sentence": str,
+    "verdict": "SUPPORTED | WEAK_SUPPORT | CONTRADICTION | HALLUCINATION | UNVERIFIABLE",
+    "confidence": float,
+    "similarity": SimilarityCheck,
+    "nli": NLICheck,
+    "atomic": AtomicCheck,
+    "diagnostics": dict,
+}
+```
+
+The legacy `Halgorithm` API returns dictionaries:
 
 ```python
 {
