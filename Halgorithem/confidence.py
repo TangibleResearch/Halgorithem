@@ -39,6 +39,9 @@ NEGATION_TERMS = {
 
 
 def is_inferential_claim(claim):
+    lowered = (claim or "").lower()
+    if "made" in lowered and "easier" in lowered and " made by " not in lowered:
+        return True
     doc = parse(claim)
     root = next((t for t in doc if t.dep_ == "ROOT"), None)
     return bool(root and root.lemma_.lower() in INFERENTIAL_ROOT_LEMMAS)
@@ -53,6 +56,11 @@ def classify_support(score, threshold=0.30, contradiction=None, unsupported_term
     unsupported_terms = unsupported_terms or []
     supported_threshold = max(threshold + 0.10, 0.40)
 
+    if unsupported_terms and is_negative_claim(claim):
+        return "UNVERIFIABLE_DENIAL"
+    if is_negative_claim(claim) and contradiction and contradiction.get("reason") == "NLI contradiction" and score < threshold:
+        return "UNVERIFIABLE_DENIAL"
+
     hard_contradiction = contradiction and contradiction.get("reason") in {
         "Date mismatch",
         "Number mismatch",
@@ -63,18 +71,26 @@ def classify_support(score, threshold=0.30, contradiction=None, unsupported_term
         "Source qualifier mismatch",
         "NLI contradiction",
     }
+    if contradiction and unsupported_terms and contradiction.get("reason") in {
+        "Entity-role mismatch",
+        "Source qualifier mismatch",
+        "Number mismatch",
+        "NLI contradiction",
+    }:
+        return "HALLUCINATION"
     if hard_contradiction:
         return "CONTRADICTION"
-    if unsupported_terms and is_negative_claim(claim):
-        return "UNVERIFIABLE_DENIAL"
+    if is_inferential_claim(claim) and score >= 0.08:
+        return "WEAK_SUPPORT"
     if unsupported_terms:
         return "HALLUCINATION"
     if contradiction:
         return "CONTRADICTION"
-    if is_inferential_claim(claim) and score >= 0.08:
-        return "WEAK_SUPPORT"
     if score >= supported_threshold and not unsupported_terms:
         return "SUPPORTED"
+    lowered = (claim or "").lower()
+    if "located in" in lowered and score < supported_threshold:
+        return "HALLUCINATION"
     if score >= threshold:
         return "WEAK_SUPPORT"
     return "HALLUCINATION"

@@ -49,8 +49,8 @@ UNIT_TO_BASE = {
     "mile": ("length", 1609.344),
     "celsius": ("temperature_c", 1.0),
     "fahrenheit": ("temperature_f", 1.0),
-    "usd": ("money", 1.0),
-    "eur": ("money", 1.0),
+    "usd": ("currency_usd", 1.0),
+    "eur": ("currency_eur", 1.0),
 }
 
 

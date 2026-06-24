@@ -20,6 +20,12 @@ UNIT_ALIASES = {
     "kilometers": "kilometer",
     "mile": "mile",
     "miles": "mile",
+    "usd": "usd",
+    "dollar": "usd",
+    "dollars": "usd",
+    "eur": "eur",
+    "euro": "eur",
+    "euros": "eur",
 }
 
 NORMALIZATION = {
@@ -30,6 +36,8 @@ NORMALIZATION = {
     "centimeter": ("length", 0.01),
     "kilometer": ("length", 1000.0),
     "mile": ("length", 1609.344),
+    "usd": ("currency_usd", 1.0),
+    "eur": ("currency_eur", 1.0),
 }
 
 

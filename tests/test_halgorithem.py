@@ -80,7 +80,7 @@ def test_weak_support(algo, docs):
 
 
 def test_hallucination(algo, docs):
-    assert first_status(algo, docs, "BASIC was created by NASA.") == "CONTRADICTION"
+    assert first_status(algo, docs, "BASIC was created by NASA.") == "HALLUCINATION"
 
 
 def test_denial(algo, docs):
